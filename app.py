@@ -83,7 +83,7 @@ def check_bullish_divergence(df, div_source="MACD Histogram"):
     return df
 
 # =========================================
-# FUNCTION MA STATE (DARI PINE SCRIPT)
+# FUNCTION MA STATE
 # =========================================
 def get_ma_state(close, maA, maB, maC, maD, maE, maF):
     if any(pd.isna(x) for x in [close, maA, maB, maC, maD, maE, maF]):
@@ -109,11 +109,11 @@ def get_ma_state(close, maA, maB, maC, maD, maE, maF):
 # =========================================
 st.set_page_config(page_title="Multi-Signal Screener", layout="wide")
 st.title("📊 Multi-Signal Screener")
-st.write("Saring saham berdasarkan MACD, Divergence, Stoch RSI, dan Kerapatan Moving Average (MA State).")
+st.write("Saring saham dengan logika **AND (Wajib memenuhi semua yang dicentang)**.")
 
 # Pengaturan Sinyal (Checkbox)
 st.sidebar.header("🎯 Pilihan Sinyal (MACD & Div)")
-filter_div = st.sidebar.checkbox("🐂 Bullish Divergence", value=True)
+filter_div = st.sidebar.checkbox("🐂 Bullish Divergence", value=False)
 filter_early_gc = st.sidebar.checkbox("⚡ MACD Early GC", value=False)
 filter_gc = st.sidebar.checkbox("✅ MACD Fase GC", value=False)
 
@@ -155,12 +155,10 @@ if st.sidebar.button("Mulai Screening", type="primary"):
         try:
             data = daily_data[kode].copy() if len(saham_list) > 1 else daily_data.copy()
             data = data.dropna(subset=["Close"])
-            # Kita butuh minimal 100 hari untuk menghitung MA100
             if len(data) < 100: continue
 
             close_series = data["Close"]
             
-            # --- Moving Averages ---
             data["MA3"] = close_series.rolling(3).mean()
             data["MA5"] = close_series.rolling(5).mean()
             data["MA10"] = close_series.rolling(10).mean()
@@ -168,35 +166,29 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             data["MA50"] = close_series.rolling(50).mean()
             data["MA100"] = close_series.rolling(100).mean()
 
-            # --- MACD 8, 21, 5 ---
             data["MACD"] = close_series.ewm(span=8, adjust=False).mean() - close_series.ewm(span=21, adjust=False).mean()
             data["MACD_SIGNAL"] = data["MACD"].ewm(span=5, adjust=False).mean()
             
-            # --- RSI 14 ---
             delta = close_series.diff()
             gain = delta.where(delta > 0, 0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
             loss = (-delta.where(delta < 0, 0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
             data["RSI"] = 100 - (100 / (1 + (gain / loss)))
 
-            # --- STOCH RSI 5, 3, 3 ---
             rsi_min = data["RSI"].rolling(5).min()
             rsi_max = data["RSI"].rolling(5).max()
             data["STOCH_RSI"] = ((data["RSI"] - rsi_min) / (rsi_max - rsi_min)) * 100
             data["K"] = data["STOCH_RSI"].rolling(3).mean()
             data["D"] = data["K"].rolling(3).mean()
 
-            # --- CEK DIVERGENCE ---
             data = check_bullish_divergence(data, div_source)
             recent = data.tail(lookback_days)
             
-            # ================= EVALUASI STATUS SAHAM SAAT INI =================
+            # ================= EVALUASI STATUS SAHAM =================
             actual_states = []
             
-            # 1. Divergence
             if recent["Reg_Bull_Div"].any(): actual_states.append("🐂 REG DIV")
             if recent["Hidden_Bull_Div"].any(): actual_states.append("🛡️ HID DIV")
             
-            # 2. MACD
             macd_now = data["MACD"].iloc[-1]
             signal_now = data["MACD_SIGNAL"].iloc[-1]
             macd_prev = data["MACD"].iloc[-2]
@@ -204,7 +196,6 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             if (macd_prev <= signal_prev) and (macd_now > signal_now): actual_states.append("⚡ MACD EARLY GC")
             elif macd_now > signal_now: actual_states.append("✅ MACD GC")
                 
-            # 3. Stoch RSI
             k_now = data["K"].iloc[-1]
             d_now = data["D"].iloc[-1]
             k_prev = data["K"].iloc[-2]
@@ -212,40 +203,38 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             if (k_prev <= d_prev) and (k_now > d_now): actual_states.append("⚡ STOCH EARLY GC")
             elif k_now > d_now: actual_states.append("✅ STOCH GC")
 
-            # 4. MA State (S, M, L)
             close = float(close_series.iloc[-1])
-            ma3 = float(data["MA3"].iloc[-1])
-            ma5 = float(data["MA5"].iloc[-1])
-            ma10 = float(data["MA10"].iloc[-1])
-            ma20 = float(data["MA20"].iloc[-1])
-            ma50 = float(data["MA50"].iloc[-1])
-            ma100 = float(data["MA100"].iloc[-1])
+            s_state = get_ma_state(close, float(data["MA3"].iloc[-1]), float(data["MA5"].iloc[-1]), float(data["MA10"].iloc[-1]), float(data["MA20"].iloc[-1]), float(data["MA20"].iloc[-1]), float(data["MA20"].iloc[-1]))
+            m_state = get_ma_state(close, float(data["MA3"].iloc[-1]), float(data["MA5"].iloc[-1]), float(data["MA10"].iloc[-1]), float(data["MA20"].iloc[-1]), float(data["MA50"].iloc[-1]), float(data["MA50"].iloc[-1]))
+            l_state = get_ma_state(close, float(data["MA3"].iloc[-1]), float(data["MA5"].iloc[-1]), float(data["MA10"].iloc[-1]), float(data["MA20"].iloc[-1]), float(data["MA50"].iloc[-1]), float(data["MA100"].iloc[-1]))
 
-            s_state = get_ma_state(close, ma3, ma5, ma10, ma20, ma20, ma20)
-            m_state = get_ma_state(close, ma3, ma5, ma10, ma20, ma50, ma50)
-            l_state = get_ma_state(close, ma3, ma5, ma10, ma20, ma50, ma100)
-
-            # Flag jika salah satu dari state (S/M/L) mencetak Melilit/Rapat
             all_states = [s_state, m_state, l_state]
             if "MELILIT UP" in all_states: actual_states.append("🌪️ MELILIT UP")
             if "RAPAT UP" in all_states: actual_states.append("📏 RAPAT UP")
                 
-            # ================= LOGIKA FILTER MATCHING =================
-            match = False
+            # ================= LOGIKA FILTER (STRICT AND) =================
+            match = True # Kita asumsikan lolos, sampai ada centangan yang gagal dipenuhi
             
-            if filter_div and ("🐂 REG DIV" in actual_states or "🛡️ HID DIV" in actual_states): match = True
-            if filter_early_gc and "⚡ MACD EARLY GC" in actual_states: match = True
-            if filter_gc and ("✅ MACD GC" in actual_states or "⚡ MACD EARLY GC" in actual_states): match = True
-            if filter_stoch_early_gc and "⚡ STOCH EARLY GC" in actual_states: match = True
-            if filter_stoch_gc and ("✅ STOCH GC" in actual_states or "⚡ STOCH EARLY GC" in actual_states): match = True
-            if filter_melilit_up and "🌪️ MELILIT UP" in actual_states: match = True
-            if filter_rapat_up and "📏 RAPAT UP" in actual_states: match = True
+            if filter_div and not ("🐂 REG DIV" in actual_states or "🛡️ HID DIV" in actual_states): 
+                match = False
+            if filter_early_gc and "⚡ MACD EARLY GC" not in actual_states: 
+                match = False
+            if filter_gc and not ("✅ MACD GC" in actual_states or "⚡ MACD EARLY GC" in actual_states): 
+                match = False
+            if filter_stoch_early_gc and "⚡ STOCH EARLY GC" not in actual_states: 
+                match = False
+            if filter_stoch_gc and not ("✅ STOCH GC" in actual_states or "⚡ STOCH EARLY GC" in actual_states): 
+                match = False
+            if filter_melilit_up and "🌪️ MELILIT UP" not in actual_states: 
+                match = False
+            if filter_rapat_up and "📏 RAPAT UP" not in actual_states: 
+                match = False
                 
             if match:
                 hasil.append({
                     "Saham": kode.replace(".JK", ""),
                     "Sektor": sektor_dict.get(kode, "-"),
-                    "Sinyal Match": " + ".join(actual_states),
+                    "Semua Sinyal Aktif": " + ".join(actual_states),
                     "Close": close,
                     "S.State": s_state,
                     "M.State": m_state,
@@ -259,7 +248,7 @@ if st.sidebar.button("Mulai Screening", type="primary"):
     
     if not df_hasil.empty:
         df_hasil = df_hasil.sort_values(by="Saham").reset_index(drop=True)
-        st.success(f"Ditemukan {len(df_hasil)} saham yang sesuai kriteria!")
+        st.success(f"Ditemukan {len(df_hasil)} saham yang memenuhi SEMUA syarat kriteria centang Anda!")
         st.dataframe(df_hasil)
         
         output = io.BytesIO()
@@ -272,4 +261,4 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             mime="application/vnd.ms-excel"
         )
     else:
-        st.warning("Tidak ada saham yang memenuhi kriteria pilihan Anda hari ini.")
+        st.warning("Pencarian terlalu ketat. Tidak ada saham yang memenuhi semua kriteria centang secara bersamaan.")
