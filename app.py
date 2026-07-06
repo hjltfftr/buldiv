@@ -85,16 +85,19 @@ def check_bullish_divergence(df, div_source="MACD Histogram"):
 # =========================================
 # UI STREAMLIT
 # =========================================
-st.set_page_config(page_title="Custom Screener (MACD 8,21,5)", layout="wide")
-st.title("📊 Multi-Signal Screener (MACD 8, 21, 5)")
-st.write("Saring saham berdasarkan Divergence, Early Golden Cross, atau Fase Uptrend MACD.")
+st.set_page_config(page_title="Multi-Signal Screener", layout="wide")
+st.title("📊 Multi-Signal Screener")
+st.write("Saring saham berdasarkan MACD (8,21,5), Divergence, dan Stoch RSI (5,3,3).")
 
 # Pengaturan Sinyal (Checkbox)
-st.sidebar.header("🎯 Pilihan Sinyal")
-st.sidebar.write("Centang sinyal yang ingin dicari (opsi bersifat OR):")
+st.sidebar.header("🎯 Pilihan Sinyal (MACD & Div)")
 filter_div = st.sidebar.checkbox("🐂 Bullish Divergence", value=True)
-filter_early_gc = st.sidebar.checkbox("⚡ Early GC (Baru saja Golden Cross)", value=True)
-filter_gc = st.sidebar.checkbox("✅ Fase MACD GC (Sedang Bullish)", value=False)
+filter_early_gc = st.sidebar.checkbox("⚡ MACD Early GC (Baru Saja)", value=True)
+filter_gc = st.sidebar.checkbox("✅ MACD Fase GC (Bullish)", value=False)
+
+st.sidebar.header("🎯 Pilihan Sinyal (Stoch RSI)")
+filter_stoch_early_gc = st.sidebar.checkbox("⚡ Stoch RSI Early GC (Baru Saja)", value=False)
+filter_stoch_gc = st.sidebar.checkbox("✅ Stoch RSI Fase GC (Bullish)", value=False)
 
 # Pengaturan Umum
 st.sidebar.header("⚙️ Pengaturan Umum")
@@ -103,7 +106,7 @@ lookback_days = st.sidebar.slider("Rentang Deteksi Divergence (Hari):", 1, 14, 5
 min_volume = st.sidebar.number_input("Minimal Rata-rata Volume (Lembar):", value=1_000_000, step=500000)
 
 if st.sidebar.button("Mulai Screening", type="primary"):
-    if not (filter_div or filter_early_gc or filter_gc):
+    if not (filter_div or filter_early_gc or filter_gc or filter_stoch_early_gc or filter_stoch_gc):
         st.error("⚠️ Silakan centang minimal satu pilihan sinyal di menu sebelah kiri!")
         st.stop()
 
@@ -130,26 +133,35 @@ if st.sidebar.button("Mulai Screening", type="primary"):
 
             close_series = data["Close"]
             
-            # MACD 8, 21, 5
+            # --- MACD 8, 21, 5 ---
             data["MACD"] = close_series.ewm(span=8, adjust=False).mean() - close_series.ewm(span=21, adjust=False).mean()
             data["MACD_SIGNAL"] = data["MACD"].ewm(span=5, adjust=False).mean()
             
-            # RSI 14
+            # --- RSI 14 ---
             delta = close_series.diff()
             gain = delta.where(delta > 0, 0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
             loss = (-delta.where(delta < 0, 0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
             data["RSI"] = 100 - (100 / (1 + (gain / loss)))
 
-            # Cek Divergence
+            # --- STOCH RSI 5, 3, 3 ---
+            rsi_min = data["RSI"].rolling(5).min()
+            rsi_max = data["RSI"].rolling(5).max()
+            data["STOCH_RSI"] = ((data["RSI"] - rsi_min) / (rsi_max - rsi_min)) * 100
+            data["K"] = data["STOCH_RSI"].rolling(3).mean()
+            data["D"] = data["K"].rolling(3).mean()
+
+            # --- CEK DIVERGENCE ---
             data = check_bullish_divergence(data, div_source)
             recent = data.tail(lookback_days)
             
-            # Evaluasi Status Saham Saat Ini
+            # ================= EVALUASI STATUS SAHAM SAAT INI =================
             actual_states = []
             
+            # 1. Divergence
             if recent["Reg_Bull_Div"].any(): actual_states.append("🐂 REG DIV")
             if recent["Hidden_Bull_Div"].any(): actual_states.append("🛡️ HID DIV")
             
+            # 2. MACD
             macd_now = data["MACD"].iloc[-1]
             signal_now = data["MACD_SIGNAL"].iloc[-1]
             macd_prev = data["MACD"].iloc[-2]
@@ -159,19 +171,35 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             is_gc = macd_now > signal_now
             
             if is_early_gc:
-                actual_states.append("⚡ EARLY GC")
+                actual_states.append("⚡ MACD EARLY GC")
             elif is_gc:
                 actual_states.append("✅ MACD GC")
                 
-            # Filter berdasarkan pilihan User
+            # 3. Stoch RSI
+            k_now = data["K"].iloc[-1]
+            d_now = data["D"].iloc[-1]
+            k_prev = data["K"].iloc[-2]
+            d_prev = data["D"].iloc[-2]
+            
+            is_stoch_early_gc = (k_prev <= d_prev) and (k_now > d_now)
+            is_stoch_gc = k_now > d_now
+            
+            if is_stoch_early_gc:
+                actual_states.append("⚡ STOCH EARLY GC")
+            elif is_stoch_gc:
+                actual_states.append("✅ STOCH GC")
+                
+            # ================= LOGIKA FILTER MATCHING =================
             match = False
-            if filter_div and ("🐂 REG DIV" in actual_states or "🛡️ HID DIV" in actual_states):
-                match = True
-            if filter_early_gc and "⚡ EARLY GC" in actual_states:
-                match = True
-            if filter_gc and ("✅ MACD GC" in actual_states or "⚡ EARLY GC" in actual_states): 
-                # (Jika user pilih Fase GC, Early GC tetap masuk karena logikanya Early GC adalah awal mula Fase GC)
-                match = True
+            
+            # Filter MACD & Div
+            if filter_div and ("🐂 REG DIV" in actual_states or "🛡️ HID DIV" in actual_states): match = True
+            if filter_early_gc and "⚡ MACD EARLY GC" in actual_states: match = True
+            if filter_gc and ("✅ MACD GC" in actual_states or "⚡ MACD EARLY GC" in actual_states): match = True
+                
+            # Filter Stoch RSI
+            if filter_stoch_early_gc and "⚡ STOCH EARLY GC" in actual_states: match = True
+            if filter_stoch_gc and ("✅ STOCH GC" in actual_states or "⚡ STOCH EARLY GC" in actual_states): match = True
                 
             if match:
                 hasil.append({
@@ -180,7 +208,9 @@ if st.sidebar.button("Mulai Screening", type="primary"):
                     "Sinyal": " + ".join(actual_states),
                     "Close": float(data["Close"].iloc[-1]),
                     "MACD": round(macd_now, 4),
-                    "MACD Signal": round(signal_now, 4)
+                    "MACD Sig": round(signal_now, 4),
+                    "Stoch %K": round(k_now, 2),
+                    "Stoch %D": round(d_now, 2)
                 })
         except: continue
 
