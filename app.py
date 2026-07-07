@@ -119,18 +119,19 @@ filter_early_gc = st.sidebar.checkbox("⚡ MACD Early GC", value=True)
 filter_gc = st.sidebar.checkbox("✅ MACD Fase GC", value=False)
 filter_stoch_early_gc = st.sidebar.checkbox("⚡ Stoch RSI Early GC", value=False)
 filter_stoch_gc = st.sidebar.checkbox("✅ Stoch RSI Fase GC", value=False)
-filter_melilit_up = st.sidebar.checkbox("🌪️ MA Melilit Up (Konsolidasi/Breakout)", value=False)
+filter_bb_buy = st.sidebar.checkbox("📉 BB Buy (Rebound BB Bawah)", value=False)
+filter_melilit_up = st.sidebar.checkbox("🌪️ MA Melilit Up (Konsolidasi)", value=False)
 filter_rapat_up = st.sidebar.checkbox("📏 MA Rapat Up (Strong Uptrend)", value=False)
-filter_adx = st.sidebar.checkbox("🚀 ADX Trend Bullish Kuat (ADX > 20 & +DI > -DI)", value=False)
+filter_adx = st.sidebar.checkbox("🚀 ADX Trend Bullish Kuat", value=False)
 
 # Pengaturan Umum
 st.sidebar.header("⚙️ Pengaturan Umum")
 div_source = st.sidebar.selectbox("Sumber Divergence:", ["MACD Histogram", "RSI"])
-lookback_days = st.sidebar.slider("Rentang Deteksi Divergence (Hari):", 1, 14, 5)
+lookback_days = st.sidebar.slider("Rentang Deteksi Ke Belakang (Hari):", 1, 14, 5)
 min_volume = st.sidebar.number_input("Minimal Rata-rata Volume (Lembar):", value=1_000_000, step=500000)
 
 if st.sidebar.button("Mulai Screening", type="primary"):
-    if not any([filter_div, filter_early_gc, filter_gc, filter_stoch_early_gc, filter_stoch_gc, filter_melilit_up, filter_rapat_up, filter_adx]):
+    if not any([filter_div, filter_early_gc, filter_gc, filter_stoch_early_gc, filter_stoch_gc, filter_melilit_up, filter_rapat_up, filter_adx, filter_bb_buy]):
         st.error("⚠️ Silakan centang minimal satu pilihan sinyal di menu sebelah kiri!")
         st.stop()
 
@@ -157,7 +158,7 @@ if st.sidebar.button("Mulai Screening", type="primary"):
 
             close_series = data["Close"]
             
-            # MA CALCULATION
+            # ---------------- MA CALCULATION ----------------
             data["MA3"] = close_series.rolling(3).mean()
             data["MA5"] = close_series.rolling(5).mean()
             data["MA10"] = close_series.rolling(10).mean()
@@ -165,11 +166,11 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             data["MA50"] = close_series.rolling(50).mean()
             data["MA100"] = close_series.rolling(100).mean()
 
-            # MACD
+            # ---------------- MACD ----------------
             data["MACD"] = close_series.ewm(span=8, adjust=False).mean() - close_series.ewm(span=21, adjust=False).mean()
             data["MACD_SIGNAL"] = data["MACD"].ewm(span=5, adjust=False).mean()
             
-            # RSI & STOCH RSI
+            # ---------------- RSI & STOCH RSI ----------------
             delta = close_series.diff()
             gain = delta.where(delta > 0, 0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
             loss = (-delta.where(delta < 0, 0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
@@ -181,7 +182,7 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             data["K"] = data["STOCH_RSI"].rolling(3).mean()
             data["D"] = data["K"].rolling(3).mean()
 
-            # ADX CALCULATION (14 Period)
+            # ---------------- ADX CALCULATION ----------------
             tr1 = data['High'] - data['Low']
             tr2 = (data['High'] - data['Close'].shift(1)).abs()
             tr3 = (data['Low'] - data['Close'].shift(1)).abs()
@@ -204,7 +205,17 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             dx = 100 * (data['+DI'] - data['-DI']).abs() / (data['+DI'] + data['-DI'])
             data['ADX'] = dx.ewm(alpha=1/14, adjust=False).mean()
 
-            # DIVERGENCE
+            # ---------------- BOLLINGER BANDS CALCULATION ----------------
+            bb_length = 20
+            bb_mult = 2.0
+            data['BB_Basis'] = close_series.rolling(window=bb_length).mean()
+            data['BB_Dev'] = close_series.rolling(window=bb_length).std(ddof=0) # ddof=0 sama dengan perhitungan Pine Script stdev
+            data['BB_Lower'] = data['BB_Basis'] - (bb_mult * data['BB_Dev'])
+            
+            # Sinyal BB Buy (close[1] < bb_lower[1] and close > bb_lower)
+            data['BB_Buy'] = (close_series.shift(1) < data['BB_Lower'].shift(1)) & (close_series > data['BB_Lower'])
+
+            # ---------------- DIVERGENCE ----------------
             data = check_bullish_divergence(data, div_source)
             recent = data.tail(lookback_days)
             
@@ -216,7 +227,7 @@ if st.sidebar.button("Mulai Screening", type="primary"):
                 if recent["Reg_Bull_Div"].any(): matched_signals.append("🐂 REG DIV")
                 if recent["Hidden_Bull_Div"].any(): matched_signals.append("🛡️ HID DIV")
             
-            # 2. MACD
+            # 2. MACD (Realtime Hari Terakhir Saja)
             macd_now = data["MACD"].iloc[-1]
             signal_now = data["MACD_SIGNAL"].iloc[-1]
             macd_prev = data["MACD"].iloc[-2]
@@ -227,7 +238,7 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             if filter_gc and macd_now > signal_now: 
                 matched_signals.append("✅ MACD GC")
                 
-            # 3. Stoch RSI
+            # 3. Stoch RSI (Realtime Hari Terakhir Saja)
             k_now = data["K"].iloc[-1]
             d_now = data["D"].iloc[-1]
             k_prev = data["K"].iloc[-2]
@@ -238,7 +249,12 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             if filter_stoch_gc and k_now > d_now: 
                 matched_signals.append("✅ STOCH GC")
 
-            # 4. MA State
+            # 4. BB Buy (Melihat rentang lookback_days ke belakang)
+            if filter_bb_buy:
+                if recent["BB_Buy"].any():
+                    matched_signals.append("📉 BB BUY")
+
+            # 5. MA State (Realtime)
             close = float(close_series.iloc[-1])
             s_state = get_ma_state(close, float(data["MA3"].iloc[-1]), float(data["MA5"].iloc[-1]), float(data["MA10"].iloc[-1]), float(data["MA20"].iloc[-1]), float(data["MA20"].iloc[-1]), float(data["MA20"].iloc[-1]))
             m_state = get_ma_state(close, float(data["MA3"].iloc[-1]), float(data["MA5"].iloc[-1]), float(data["MA10"].iloc[-1]), float(data["MA20"].iloc[-1]), float(data["MA50"].iloc[-1]), float(data["MA50"].iloc[-1]))
@@ -250,13 +266,13 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             if filter_rapat_up and "RAPAT UP" in all_states: 
                 matched_signals.append("📏 RAPAT UP")
                 
-            # 5. ADX
+            # 6. ADX (Realtime)
             adx_now = data['ADX'].iloc[-1]
             plus_di_now = data['+DI'].iloc[-1]
             minus_di_now = data['-DI'].iloc[-1]
             
             if filter_adx and adx_now > 20 and plus_di_now > minus_di_now:
-                matched_signals.append("🚀 ADX BULL (Trend)")
+                matched_signals.append("🚀 ADX BULL")
 
             # ================= TAMPILKAN JIKA ADA MINIMAL 1 MATCH =================
             if len(matched_signals) > 0:
@@ -265,9 +281,9 @@ if st.sidebar.button("Mulai Screening", type="primary"):
                     "Sektor": sektor_dict.get(kode, "-"),
                     "Sinyal Terdeteksi": " + ".join(matched_signals),
                     "Close": close,
+                    "BB Lower": round(data['BB_Lower'].iloc[-1], 2),
                     "ADX": round(adx_now, 2),
                     "+DI": round(plus_di_now, 2),
-                    "-DI": round(minus_di_now, 2),
                     "S.State": s_state,
                     "M.State": m_state,
                     "MACD": round(macd_now, 4),
