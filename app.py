@@ -120,8 +120,8 @@ filter_gc = st.sidebar.checkbox("✅ MACD Fase GC", value=False)
 filter_stoch_early_gc = st.sidebar.checkbox("⚡ Stoch RSI Early GC", value=False)
 filter_stoch_gc = st.sidebar.checkbox("✅ Stoch RSI Fase GC", value=False)
 filter_bb_buy = st.sidebar.checkbox("📉 BB Buy (Rebound BB Bawah)", value=False)
-filter_melilit_up = st.sidebar.checkbox("🌪️ MA Melilit Up (Konsolidasi)", value=False)
-filter_rapat_up = st.sidebar.checkbox("📏 MA Rapat Up (Strong Uptrend)", value=False)
+filter_melilit_up = st.sidebar.checkbox("🌪️ MA Melilit Up & Close > MA (3,5,10,20)", value=False)
+filter_rapat_up = st.sidebar.checkbox("📏 MA Rapat Up & Close > MA (3,5,10,20)", value=False)
 filter_adx = st.sidebar.checkbox("🚀 ADX Trend Bullish Kuat", value=False)
 
 # Pengaturan Umum
@@ -209,10 +209,8 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             bb_length = 20
             bb_mult = 2.0
             data['BB_Basis'] = close_series.rolling(window=bb_length).mean()
-            data['BB_Dev'] = close_series.rolling(window=bb_length).std(ddof=0) # ddof=0 sama dengan perhitungan Pine Script stdev
+            data['BB_Dev'] = close_series.rolling(window=bb_length).std(ddof=0)
             data['BB_Lower'] = data['BB_Basis'] - (bb_mult * data['BB_Dev'])
-            
-            # Sinyal BB Buy (close[1] < bb_lower[1] and close > bb_lower)
             data['BB_Buy'] = (close_series.shift(1) < data['BB_Lower'].shift(1)) & (close_series > data['BB_Lower'])
 
             # ---------------- DIVERGENCE ----------------
@@ -227,7 +225,7 @@ if st.sidebar.button("Mulai Screening", type="primary"):
                 if recent["Reg_Bull_Div"].any(): matched_signals.append("🐂 REG DIV")
                 if recent["Hidden_Bull_Div"].any(): matched_signals.append("🛡️ HID DIV")
             
-            # 2. MACD (Realtime Hari Terakhir Saja)
+            # 2. MACD 
             macd_now = data["MACD"].iloc[-1]
             signal_now = data["MACD_SIGNAL"].iloc[-1]
             macd_prev = data["MACD"].iloc[-2]
@@ -238,7 +236,7 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             if filter_gc and macd_now > signal_now: 
                 matched_signals.append("✅ MACD GC")
                 
-            # 3. Stoch RSI (Realtime Hari Terakhir Saja)
+            # 3. Stoch RSI 
             k_now = data["K"].iloc[-1]
             d_now = data["D"].iloc[-1]
             k_prev = data["K"].iloc[-2]
@@ -249,24 +247,34 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             if filter_stoch_gc and k_now > d_now: 
                 matched_signals.append("✅ STOCH GC")
 
-            # 4. BB Buy (Melihat rentang lookback_days ke belakang)
+            # 4. BB Buy 
             if filter_bb_buy:
                 if recent["BB_Buy"].any():
                     matched_signals.append("📉 BB BUY")
 
-            # 5. MA State (Realtime)
+            # 5. MA State & Price Above MA
             close = float(close_series.iloc[-1])
-            s_state = get_ma_state(close, float(data["MA3"].iloc[-1]), float(data["MA5"].iloc[-1]), float(data["MA10"].iloc[-1]), float(data["MA20"].iloc[-1]), float(data["MA20"].iloc[-1]), float(data["MA20"].iloc[-1]))
-            m_state = get_ma_state(close, float(data["MA3"].iloc[-1]), float(data["MA5"].iloc[-1]), float(data["MA10"].iloc[-1]), float(data["MA20"].iloc[-1]), float(data["MA50"].iloc[-1]), float(data["MA50"].iloc[-1]))
-            l_state = get_ma_state(close, float(data["MA3"].iloc[-1]), float(data["MA5"].iloc[-1]), float(data["MA10"].iloc[-1]), float(data["MA20"].iloc[-1]), float(data["MA50"].iloc[-1]), float(data["MA100"].iloc[-1]))
+            ma3_now = float(data["MA3"].iloc[-1])
+            ma5_now = float(data["MA5"].iloc[-1])
+            ma10_now = float(data["MA10"].iloc[-1])
+            ma20_now = float(data["MA20"].iloc[-1])
+            ma50_now = float(data["MA50"].iloc[-1])
+            ma100_now = float(data["MA100"].iloc[-1])
+
+            s_state = get_ma_state(close, ma3_now, ma5_now, ma10_now, ma20_now, ma20_now, ma20_now)
+            m_state = get_ma_state(close, ma3_now, ma5_now, ma10_now, ma20_now, ma50_now, ma50_now)
+            l_state = get_ma_state(close, ma3_now, ma5_now, ma10_now, ma20_now, ma50_now, ma100_now)
             all_states = [s_state, m_state, l_state]
             
-            if filter_melilit_up and "MELILIT UP" in all_states: 
-                matched_signals.append("🌪️ MELILIT UP")
-            if filter_rapat_up and "RAPAT UP" in all_states: 
-                matched_signals.append("📏 RAPAT UP")
+            # Cek syarat harga berada di atas MA3, MA5, MA10, dan MA20
+            price_above_short_mas = (close > ma3_now) and (close > ma5_now) and (close > ma10_now) and (close > ma20_now)
+            
+            if filter_melilit_up and "MELILIT UP" in all_states and price_above_short_mas: 
+                matched_signals.append("🌪️ MELILIT UP (Valid)")
+            if filter_rapat_up and "RAPAT UP" in all_states and price_above_short_mas: 
+                matched_signals.append("📏 RAPAT UP (Valid)")
                 
-            # 6. ADX (Realtime)
+            # 6. ADX 
             adx_now = data['ADX'].iloc[-1]
             plus_di_now = data['+DI'].iloc[-1]
             minus_di_now = data['-DI'].iloc[-1]
