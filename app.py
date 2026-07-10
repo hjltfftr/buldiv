@@ -106,12 +106,39 @@ def get_ma_state(close, maA, maB, maC, maD, maE, maF):
     else: return "JAUH"
 
 # =========================================
+# FUNCTION HITUNG PANTULAN (REJECTION)
+# =========================================
+def count_rejections(recent_df, ma_col, tolerance):
+    rejection_count = 0
+    if recent_df.empty:
+        return 0
+
+    for i in range(len(recent_df)):
+        low = recent_df["Low"].iloc[i]
+        close = recent_df["Close"].iloc[i]
+        ma = recent_df[ma_col].iloc[i]
+
+        if pd.isna(ma):
+            continue
+
+        # Harga mantul jika: Low menyentuh area MA (dalam batas toleransi) DAN Close bertahan di atas MA
+        rejection = (
+            (low >= (ma * (1 - tolerance))) and
+            (low <= (ma * (1 + tolerance))) and
+            (close > ma)
+        )
+
+        if rejection:
+            rejection_count += 1
+
+    return rejection_count
+
+# =========================================
 # UI STREAMLIT
 # =========================================
 st.set_page_config(page_title="Multi-Signal Screener", layout="wide")
 st.title("📊 Multi-Signal Screener")
 st.write("Saring saham berdasarkan Timeframe yang Anda pilih. Emiten akan muncul jika memenuhi **minimal satu** parameter yang Anda centang.")
-st.caption("ℹ️ *Catatan: Data intraday IDX (menit/jam) dari Yahoo Finance memiliki delay 15-20 menit. Sinyal yang muncul merepresentasikan kondisi pasar 15 menit terakhir.*")
 
 # Pengaturan Sinyal (Checkbox)
 st.sidebar.header("🎯 Pilihan Sinyal")
@@ -121,44 +148,51 @@ filter_gc = st.sidebar.checkbox("✅ MACD Fase GC", value=False)
 filter_stoch_early_gc = st.sidebar.checkbox("⚡ Stoch RSI Early GC", value=False)
 filter_stoch_gc = st.sidebar.checkbox("✅ Stoch RSI Fase GC", value=False)
 filter_bb_buy = st.sidebar.checkbox("📉 BB Buy (Rebound BB Bawah)", value=False)
+filter_bounce_ma20 = st.sidebar.checkbox("🏓 Pantulan MA20", value=False)
+filter_bounce_ma50 = st.sidebar.checkbox("🏓 Pantulan MA50", value=False)
 filter_melilit_up = st.sidebar.checkbox("🌪️ MA Melilit Up & Close > MA (3,5,10,20)", value=False)
 filter_rapat_up = st.sidebar.checkbox("📏 MA Rapat Up & Close > MA (3,5,10,20)", value=False)
 filter_adx = st.sidebar.checkbox("🚀 ADX Trend Bullish Kuat", value=False)
 
 # Pengaturan Umum
 st.sidebar.header("⚙️ Pengaturan Umum")
-timeframe_options = [
-    "15 Menit", "30 Menit", "1 Jam", "2 Jam", "3 Jam", "4 Jam", 
+
+# List Pilihan Timeframe
+list_tf = [
+    "15 Menit", "30 Menit", "1 Jam", "2 Jam", "3 Jam", "4 Jam",
     "Daily (1 Hari)", "Weekly (1 Minggu)", "Monthly (1 Bulan)"
 ]
-tf_choice = st.sidebar.selectbox("Pilih Timeframe:", timeframe_options, index=6)
+tf_choice = st.sidebar.selectbox("Pilih Timeframe:", list_tf, index=6)
 div_source = st.sidebar.selectbox("Sumber Divergence:", ["MACD Histogram", "RSI"])
 lookback_days = st.sidebar.slider("Rentang Deteksi Ke Belakang (Bar/Candle):", 1, 14, 5)
 min_volume = st.sidebar.number_input("Minimal Rata-rata Volume (Lembar):", value=1_000_000, step=500000)
 
-# Mapping Timeframe ke format YFinance
+# Mapping Timeframe untuk YFinance & Resampling
 tf_map = {
-    "15 Menit": {"interval": "15m", "period": "60d"},
-    "30 Menit": {"interval": "30m", "period": "60d"},
-    "1 Jam": {"interval": "1h", "period": "730d"},
+    "15 Menit": {"interval": "15m", "period": "60d", "resample": None},
+    "30 Menit": {"interval": "30m", "period": "60d", "resample": None},
+    "1 Jam": {"interval": "1h", "period": "730d", "resample": None},
     "2 Jam": {"interval": "1h", "period": "730d", "resample": "2h"},
     "3 Jam": {"interval": "1h", "period": "730d", "resample": "3h"},
     "4 Jam": {"interval": "1h", "period": "730d", "resample": "4h"},
-    "Daily (1 Hari)": {"interval": "1d", "period": "2y"},
-    "Weekly (1 Minggu)": {"interval": "1wk", "period": "5y"},
-    "Monthly (1 Bulan)": {"interval": "1mo", "period": "10y"}
+    "Daily (1 Hari)": {"interval": "1d", "period": "2y", "resample": None},
+    "Weekly (1 Minggu)": {"interval": "1wk", "period": "5y", "resample": None},
+    "Monthly (1 Bulan)": {"interval": "1mo", "period": "10y", "resample": None}
 }
-
 data_interval = tf_map[tf_choice]["interval"]
 data_period = tf_map[tf_choice]["period"]
-need_resample = tf_map[tf_choice].get("resample", None)
+resample_freq = tf_map[tf_choice]["resample"]
+
+# Peringatan Delay untuk Intraday
+if tf_choice in ["15 Menit", "30 Menit", "1 Jam", "2 Jam", "3 Jam", "4 Jam"]:
+    st.warning("⚠️ **Perhatian:** Data intraday (menit/jam) dari Yahoo Finance untuk bursa Indonesia mengalami *delay* sekitar 15-20 menit dari waktu *real-time* di pasar.")
 
 if st.sidebar.button("Mulai Screening", type="primary"):
-    if not any([filter_div, filter_early_gc, filter_gc, filter_stoch_early_gc, filter_stoch_gc, filter_melilit_up, filter_rapat_up, filter_adx, filter_bb_buy]):
+    if not any([filter_div, filter_early_gc, filter_gc, filter_stoch_early_gc, filter_stoch_gc, filter_melilit_up, filter_rapat_up, filter_adx, filter_bb_buy, filter_bounce_ma20, filter_bounce_ma50]):
         st.error("⚠️ Silakan centang minimal satu pilihan sinyal di menu sebelah kiri!")
         st.stop()
 
-    with st.spinner(f"Mengambil data {tf_choice}... (Proses ini mungkin memakan waktu)"):
+    with st.spinner(f"Mengambil data {tf_choice}..."):
         try:
             excel_df = get_idx_stocks_from_tradingview()
             excel_df = excel_df[excel_df["TV_Volume"] >= min_volume]
@@ -172,7 +206,6 @@ if st.sidebar.button("Mulai Screening", type="primary"):
     hasil = []
     st.info(f"Memproses {len(saham_list)} saham dengan likuiditas memadai pada timeframe {tf_choice}...")
     
-    # Download data berdasarkan interval yang dipilih
     daily_data = yf.download(tickers=saham_list, period=data_period, interval=data_interval, group_by="ticker", auto_adjust=False, progress=False, threads=True)
     
     for kode in saham_list:
@@ -180,17 +213,16 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             data = daily_data[kode].copy() if len(saham_list) > 1 else daily_data.copy()
             data = data.dropna(subset=["Close"])
             
-            # Resampling Custom Intraday jika perlu (2 Jam, 3 Jam, 4 Jam)
-            if need_resample and not data.empty:
-                data = data.resample(need_resample).agg({
+            if resample_freq:
+                data.index = pd.to_datetime(data.index)
+                data = data.resample(resample_freq).agg({
                     'Open': 'first',
                     'High': 'max',
                     'Low': 'min',
                     'Close': 'last',
                     'Volume': 'sum'
                 }).dropna()
-            
-            # Pastikan ada cukup candle untuk indikator panjang (MA100 butuh 100 bar)
+
             if len(data) < 100: continue
 
             close_series = data["Close"]
@@ -289,7 +321,18 @@ if st.sidebar.button("Mulai Screening", type="primary"):
                 if recent["BB_Buy"].any():
                     matched_signals.append("📉 BB BUY")
 
-            # 5. MA State & Price Above MA
+            # 5. PANTULAN MA (REJECTION)
+            # MA20 Toleransi = 1% (0.01), MA50 Toleransi = 1.5% (0.015)
+            bounce_ma20_count = count_rejections(recent, "MA20", 0.01)
+            bounce_ma50_count = count_rejections(recent, "MA50", 0.015)
+            
+            if filter_bounce_ma20 and bounce_ma20_count > 0:
+                matched_signals.append(f"🏓 MA20 Bnc ({bounce_ma20_count}x)")
+                
+            if filter_bounce_ma50 and bounce_ma50_count > 0:
+                matched_signals.append(f"🏓 MA50 Bnc ({bounce_ma50_count}x)")
+
+            # 6. MA State & Price Above MA
             close = float(close_series.iloc[-1])
             ma3_now = float(data["MA3"].iloc[-1])
             ma5_now = float(data["MA5"].iloc[-1])
@@ -310,7 +353,7 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             if filter_rapat_up and "RAPAT UP" in all_states and price_above_short_mas: 
                 matched_signals.append("📏 RAPAT UP")
                 
-            # 6. ADX 
+            # 7. ADX 
             adx_now = data['ADX'].iloc[-1]
             plus_di_now = data['+DI'].iloc[-1]
             minus_di_now = data['-DI'].iloc[-1]
@@ -320,20 +363,16 @@ if st.sidebar.button("Mulai Screening", type="primary"):
 
             # ================= TAMPILKAN JIKA ADA MINIMAL 1 MATCH =================
             if len(matched_signals) > 0:
-                # Format waktu bar terakhir untuk memastikan data yang diresample valid
-                last_bar_time = data.index[-1].strftime('%Y-%m-%d %H:%M') if 'Menit' in tf_choice or 'Jam' in tf_choice else data.index[-1].strftime('%Y-%m-%d')
-                
                 hasil.append({
                     "Saham": kode.replace(".JK", ""),
                     "Sektor": sektor_dict.get(kode, "-"),
-                    "Waktu Terakhir": last_bar_time,
                     "Sinyal Terdeteksi": " + ".join(matched_signals),
                     "Close": close,
-                    "BB Lower": round(data['BB_Lower'].iloc[-1], 2),
+                    "MA20": round(ma20_now, 2),
+                    "MA50": round(ma50_now, 2),
                     "ADX": round(adx_now, 2),
                     "+DI": round(plus_di_now, 2),
                     "S.State": s_state,
-                    "M.State": m_state,
                     "MACD": round(macd_now, 4),
                     "Stoch %K": round(k_now, 2)
                 })
@@ -352,7 +391,7 @@ if st.sidebar.button("Mulai Screening", type="primary"):
         st.download_button(
             label="📥 Download Excel", 
             data=output.getvalue(), 
-            file_name=f"Screener_Result_{tf_choice.split()[0]}_{datetime.now().strftime('%Y%m%d')}.xlsx", 
+            file_name=f"Screener_Result_{tf_choice.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.xlsx", 
             mime="application/vnd.ms-excel"
         )
     else:
