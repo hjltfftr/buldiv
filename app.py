@@ -110,7 +110,7 @@ def get_ma_state(close, maA, maB, maC, maD, maE, maF):
 # =========================================
 st.set_page_config(page_title="Multi-Signal Screener", layout="wide")
 st.title("📊 Multi-Signal Screener")
-st.write("Saring saham. Emiten akan muncul jika memenuhi **minimal satu** parameter yang Anda centang.")
+st.write("Saring saham berdasarkan Timeframe yang Anda pilih. Emiten akan muncul jika memenuhi **minimal satu** parameter yang Anda centang.")
 
 # Pengaturan Sinyal (Checkbox)
 st.sidebar.header("🎯 Pilihan Sinyal")
@@ -126,16 +126,26 @@ filter_adx = st.sidebar.checkbox("🚀 ADX Trend Bullish Kuat", value=False)
 
 # Pengaturan Umum
 st.sidebar.header("⚙️ Pengaturan Umum")
+tf_choice = st.sidebar.selectbox("Pilih Timeframe:", ["Daily (1 Hari)", "Weekly (1 Minggu)", "Monthly (1 Bulan)"])
 div_source = st.sidebar.selectbox("Sumber Divergence:", ["MACD Histogram", "RSI"])
-lookback_days = st.sidebar.slider("Rentang Deteksi Ke Belakang (Hari):", 1, 14, 5)
+lookback_days = st.sidebar.slider("Rentang Deteksi Ke Belakang (Bar/Candle):", 1, 14, 5)
 min_volume = st.sidebar.number_input("Minimal Rata-rata Volume (Lembar):", value=1_000_000, step=500000)
+
+# Mapping Timeframe ke format YFinance
+tf_map = {
+    "Daily (1 Hari)": {"interval": "1d", "period": "2y"},
+    "Weekly (1 Minggu)": {"interval": "1wk", "period": "5y"},
+    "Monthly (1 Bulan)": {"interval": "1mo", "period": "10y"}
+}
+data_interval = tf_map[tf_choice]["interval"]
+data_period = tf_map[tf_choice]["period"]
 
 if st.sidebar.button("Mulai Screening", type="primary"):
     if not any([filter_div, filter_early_gc, filter_gc, filter_stoch_early_gc, filter_stoch_gc, filter_melilit_up, filter_rapat_up, filter_adx, filter_bb_buy]):
         st.error("⚠️ Silakan centang minimal satu pilihan sinyal di menu sebelah kiri!")
         st.stop()
 
-    with st.spinner("Mengambil data..."):
+    with st.spinner(f"Mengambil data {tf_choice}..."):
         try:
             excel_df = get_idx_stocks_from_tradingview()
             excel_df = excel_df[excel_df["TV_Volume"] >= min_volume]
@@ -147,8 +157,10 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             st.stop()
             
     hasil = []
-    st.info(f"Memproses {len(saham_list)} saham dengan likuiditas memadai...")
-    daily_data = yf.download(tickers=saham_list, period="1y", group_by="ticker", auto_adjust=False, progress=False, threads=True)
+    st.info(f"Memproses {len(saham_list)} saham dengan likuiditas memadai pada timeframe {tf_choice}...")
+    
+    # Download data berdasarkan interval yang dipilih
+    daily_data = yf.download(tickers=saham_list, period=data_period, interval=data_interval, group_by="ticker", auto_adjust=False, progress=False, threads=True)
     
     for kode in saham_list:
         try:
@@ -266,13 +278,12 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             l_state = get_ma_state(close, ma3_now, ma5_now, ma10_now, ma20_now, ma50_now, ma100_now)
             all_states = [s_state, m_state, l_state]
             
-            # Cek syarat harga berada di atas MA3, MA5, MA10, dan MA20
             price_above_short_mas = (close > ma3_now) and (close > ma5_now) and (close > ma10_now) and (close > ma20_now)
             
             if filter_melilit_up and "MELILIT UP" in all_states and price_above_short_mas: 
-                matched_signals.append("🌪️ MELILIT UP (Valid)")
+                matched_signals.append("🌪️ MELILIT UP")
             if filter_rapat_up and "RAPAT UP" in all_states and price_above_short_mas: 
-                matched_signals.append("📏 RAPAT UP (Valid)")
+                matched_signals.append("📏 RAPAT UP")
                 
             # 6. ADX 
             adx_now = data['ADX'].iloc[-1]
@@ -312,8 +323,8 @@ if st.sidebar.button("Mulai Screening", type="primary"):
         st.download_button(
             label="📥 Download Excel", 
             data=output.getvalue(), 
-            file_name=f"Screener_Result_{datetime.now().strftime('%Y%m%d')}.xlsx", 
+            file_name=f"Screener_Result_{tf_choice.split()[0]}_{datetime.now().strftime('%Y%m%d')}.xlsx", 
             mime="application/vnd.ms-excel"
         )
     else:
-        st.warning("Tidak ada saham yang memenuhi kriteria pilihan Anda hari ini.")
+        st.warning(f"Tidak ada saham yang memenuhi kriteria pada timeframe {tf_choice}.")
