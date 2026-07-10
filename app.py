@@ -111,6 +111,7 @@ def get_ma_state(close, maA, maB, maC, maD, maE, maF):
 st.set_page_config(page_title="Multi-Signal Screener", layout="wide")
 st.title("📊 Multi-Signal Screener")
 st.write("Saring saham berdasarkan Timeframe yang Anda pilih. Emiten akan muncul jika memenuhi **minimal satu** parameter yang Anda centang.")
+st.caption("ℹ️ *Catatan: Data intraday IDX (menit/jam) dari Yahoo Finance memiliki delay 15-20 menit. Sinyal yang muncul merepresentasikan kondisi pasar 15 menit terakhir.*")
 
 # Pengaturan Sinyal (Checkbox)
 st.sidebar.header("🎯 Pilihan Sinyal")
@@ -126,26 +127,38 @@ filter_adx = st.sidebar.checkbox("🚀 ADX Trend Bullish Kuat", value=False)
 
 # Pengaturan Umum
 st.sidebar.header("⚙️ Pengaturan Umum")
-tf_choice = st.sidebar.selectbox("Pilih Timeframe:", ["Daily (1 Hari)", "Weekly (1 Minggu)", "Monthly (1 Bulan)"])
+timeframe_options = [
+    "15 Menit", "30 Menit", "1 Jam", "2 Jam", "3 Jam", "4 Jam", 
+    "Daily (1 Hari)", "Weekly (1 Minggu)", "Monthly (1 Bulan)"
+]
+tf_choice = st.sidebar.selectbox("Pilih Timeframe:", timeframe_options, index=6)
 div_source = st.sidebar.selectbox("Sumber Divergence:", ["MACD Histogram", "RSI"])
 lookback_days = st.sidebar.slider("Rentang Deteksi Ke Belakang (Bar/Candle):", 1, 14, 5)
 min_volume = st.sidebar.number_input("Minimal Rata-rata Volume (Lembar):", value=1_000_000, step=500000)
 
 # Mapping Timeframe ke format YFinance
 tf_map = {
+    "15 Menit": {"interval": "15m", "period": "60d"},
+    "30 Menit": {"interval": "30m", "period": "60d"},
+    "1 Jam": {"interval": "1h", "period": "730d"},
+    "2 Jam": {"interval": "1h", "period": "730d", "resample": "2h"},
+    "3 Jam": {"interval": "1h", "period": "730d", "resample": "3h"},
+    "4 Jam": {"interval": "1h", "period": "730d", "resample": "4h"},
     "Daily (1 Hari)": {"interval": "1d", "period": "2y"},
     "Weekly (1 Minggu)": {"interval": "1wk", "period": "5y"},
     "Monthly (1 Bulan)": {"interval": "1mo", "period": "10y"}
 }
+
 data_interval = tf_map[tf_choice]["interval"]
 data_period = tf_map[tf_choice]["period"]
+need_resample = tf_map[tf_choice].get("resample", None)
 
 if st.sidebar.button("Mulai Screening", type="primary"):
     if not any([filter_div, filter_early_gc, filter_gc, filter_stoch_early_gc, filter_stoch_gc, filter_melilit_up, filter_rapat_up, filter_adx, filter_bb_buy]):
         st.error("⚠️ Silakan centang minimal satu pilihan sinyal di menu sebelah kiri!")
         st.stop()
 
-    with st.spinner(f"Mengambil data {tf_choice}..."):
+    with st.spinner(f"Mengambil data {tf_choice}... (Proses ini mungkin memakan waktu)"):
         try:
             excel_df = get_idx_stocks_from_tradingview()
             excel_df = excel_df[excel_df["TV_Volume"] >= min_volume]
@@ -166,6 +179,18 @@ if st.sidebar.button("Mulai Screening", type="primary"):
         try:
             data = daily_data[kode].copy() if len(saham_list) > 1 else daily_data.copy()
             data = data.dropna(subset=["Close"])
+            
+            # Resampling Custom Intraday jika perlu (2 Jam, 3 Jam, 4 Jam)
+            if need_resample and not data.empty:
+                data = data.resample(need_resample).agg({
+                    'Open': 'first',
+                    'High': 'max',
+                    'Low': 'min',
+                    'Close': 'last',
+                    'Volume': 'sum'
+                }).dropna()
+            
+            # Pastikan ada cukup candle untuk indikator panjang (MA100 butuh 100 bar)
             if len(data) < 100: continue
 
             close_series = data["Close"]
@@ -295,9 +320,13 @@ if st.sidebar.button("Mulai Screening", type="primary"):
 
             # ================= TAMPILKAN JIKA ADA MINIMAL 1 MATCH =================
             if len(matched_signals) > 0:
+                # Format waktu bar terakhir untuk memastikan data yang diresample valid
+                last_bar_time = data.index[-1].strftime('%Y-%m-%d %H:%M') if 'Menit' in tf_choice or 'Jam' in tf_choice else data.index[-1].strftime('%Y-%m-%d')
+                
                 hasil.append({
                     "Saham": kode.replace(".JK", ""),
                     "Sektor": sektor_dict.get(kode, "-"),
+                    "Waktu Terakhir": last_bar_time,
                     "Sinyal Terdeteksi": " + ".join(matched_signals),
                     "Close": close,
                     "BB Lower": round(data['BB_Lower'].iloc[-1], 2),
