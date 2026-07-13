@@ -5,7 +5,6 @@ import numpy as np
 import requests
 import io
 import warnings
-
 from datetime import datetime
 
 warnings.filterwarnings("ignore")
@@ -22,7 +21,11 @@ def get_idx_stocks_from_tradingview():
         "columns": ["name", "sector", "volume"],
         "range": [0, 1500]
     }
-    response = requests.post(url, json=payload)
+    
+    # Tambahkan header agar request tidak diblokir
+    headers = {"User-Agent": "Mozilla/5.0"}
+    response = requests.post(url, json=payload, headers=headers)
+    
     if response.status_code != 200:
         raise Exception(f"Gagal koneksi ke TradingView. Status: {response.status_code}")
     
@@ -122,7 +125,6 @@ def count_rejections(recent_df, ma_col, tolerance):
         if pd.isna(ma):
             continue
 
-        # Harga mantul jika: Low menyentuh area MA (dalam batas toleransi) DAN Close bertahan di atas MA
         rejection = (
             (low >= (ma * (1 - tolerance))) and
             (low <= (ma * (1 + tolerance))) and
@@ -201,17 +203,29 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             sektor_dict = dict(zip(excel_df["Kode_JK"], excel_df["Sektor"]))
             saham_list = sorted(list(set(excel_df["Kode_JK"].tolist())))
         except Exception as e:
-            st.error(f"Error: {e}")
+            st.error(f"Error mengambil data TradingView: {e}")
             st.stop()
             
     hasil = []
     st.info(f"Memproses {len(saham_list)} saham dengan likuiditas memadai pada timeframe {tf_choice}...")
     
-    daily_data = yf.download(tickers=saham_list, period=data_period, interval=data_interval, group_by="ticker", auto_adjust=False, progress=False, threads=True)
+    # Menambahkan auto_adjust=False yang disarankan yfinance terbaru
+    try:
+        daily_data = yf.download(tickers=saham_list, period=data_period, interval=data_interval, group_by="ticker", auto_adjust=False, progress=False, threads=True)
+    except Exception as e:
+        st.error(f"Error mengambil data dari Yahoo Finance: {e}")
+        st.stop()
     
     for kode in saham_list:
         try:
-            data = daily_data[kode].copy() if len(saham_list) > 1 else daily_data.copy()
+            # Penanganan multi-index dataframe yfinance
+            if len(saham_list) > 1:
+                if kode not in daily_data:
+                    continue
+                data = daily_data[kode].copy()
+            else:
+                data = daily_data.copy()
+                
             data = data.dropna(subset=["Close"])
             
             if resample_freq:
@@ -323,7 +337,6 @@ if st.sidebar.button("Mulai Screening", type="primary"):
                     matched_signals.append("📉 BB BUY")
 
             # 5. PANTULAN MA (REJECTION)
-            # MA20 Toleransi = 1% (0.01), MA50 Toleransi = 1.5% (0.015)
             bounce_ma20_count = count_rejections(recent, "MA20", 0.01)
             bounce_ma50_count = count_rejections(recent, "MA50", 0.015)
             
@@ -377,7 +390,8 @@ if st.sidebar.button("Mulai Screening", type="primary"):
                     "MACD": round(macd_now, 4),
                     "Stoch %K": round(k_now, 2)
                 })
-        except: continue
+        except Exception as e: 
+            continue # Abaikan saham yang datanya tidak valid
 
     df_hasil = pd.DataFrame(hasil)
     
