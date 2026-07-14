@@ -89,10 +89,10 @@ def check_hybrid_bullish_divergence(df):
             if prv_p1 is not None and prv_i1 is not None and cur_p1 is not None and cur_i1 is not None:
                 if cur_p1 < prv_p1 and cur_i1 > prv_i1:
                     macd1_reg_ok = True
-                    signals[i] = "⚡ FAST REG DIV"  # Langsung cetak sinyal cepat
+                    signals[i] = "⚡ FAST REG DIV"
                 if cur_p1 > prv_p1 and cur_i1 < prv_i1:
                     macd1_hid_ok = True
-                    signals[i] = "⚡ FAST HID DIV"  # Langsung cetak sinyal cepat
+                    signals[i] = "⚡ FAST HID DIV"
                     
             prv_p1, prv_i1 = cur_p1, cur_i1
             cur_p1, cur_i1 = None, None
@@ -332,13 +332,33 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             recent = data.tail(lookback_days)
             matched_signals = []
             
+            close = float(close_series.iloc[-1]) # Pindah ke atas agar bisa diakses untuk % Change
+            
+            # --- EKSTRAKSI TANGGAL DAN CHANGE DIVERGENCE TERAKHIR ---
+            div_date_str = "-"
+            div_change_str = "-"
+            
+            all_divs = data[data["Hybrid_Div_Signal"] != ""]
+            if not all_divs.empty:
+                last_div_idx = all_divs.index[-1]
+                last_div_close = all_divs["Close"].iloc[-1]
+                
+                # Format waktu (tampilkan jam:menit jika timeframe intraday)
+                if "Menit" in tf_choice or "Jam" in tf_choice:
+                    div_date_str = last_div_idx.strftime("%Y-%m-%d %H:%M")
+                else:
+                    div_date_str = last_div_idx.strftime("%Y-%m-%d")
+                    
+                change_pct = ((close - last_div_close) / last_div_close) * 100
+                div_change_str = f"{change_pct:+.2f}%" # "+" akan otomatis muncul jika profit/naik
+                
             # 1. Divergence Hybrid
             if filter_div:
                 recent_signals = recent[recent["Hybrid_Div_Signal"] != ""]["Hybrid_Div_Signal"].tolist()
                 if recent_signals:
                     matched_signals.extend(list(set(recent_signals)))
             
-            # 2. MACD (Menggunakan MACD1 Cepat 8, 21, 5 sesuai permintaan)
+            # 2. MACD (Menggunakan MACD1 Cepat 8, 21, 5)
             macd_now = data["MACD1_LINE"].iloc[-1]
             signal_now = data["MACD1_SIG"].iloc[-1]
             macd_prev = data["MACD1_LINE"].iloc[-2]
@@ -376,7 +396,6 @@ if st.sidebar.button("Mulai Screening", type="primary"):
                 matched_signals.append(f"🏓 MA50 Bnc ({bounce_ma50_count}x)")
 
             # 6. MA State & Price Above MA
-            close = float(close_series.iloc[-1])
             ma3_now = float(data["MA3"].iloc[-1])
             ma5_now = float(data["MA5"].iloc[-1])
             ma10_now = float(data["MA10"].iloc[-1])
@@ -411,6 +430,8 @@ if st.sidebar.button("Mulai Screening", type="primary"):
                     "Sektor": sektor_dict.get(kode, "-"),
                     "Sinyal Terdeteksi": " + ".join(matched_signals),
                     "Close": close,
+                    "Tgl Terakhir Div": div_date_str,
+                    "Change dr Div": div_change_str,
                     "MA20": round(ma20_now, 2),
                     "MA50": round(ma50_now, 2),
                     "ADX": round(adx_now, 2),
