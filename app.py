@@ -89,8 +89,10 @@ def check_hybrid_bullish_divergence(df):
             if prv_p1 is not None and prv_i1 is not None and cur_p1 is not None and cur_i1 is not None:
                 if cur_p1 < prv_p1 and cur_i1 > prv_i1:
                     macd1_reg_ok = True
+                    signals[i] = "⚡ FAST REG DIV"  # Langsung cetak sinyal cepat
                 if cur_p1 > prv_p1 and cur_i1 < prv_i1:
                     macd1_hid_ok = True
+                    signals[i] = "⚡ FAST HID DIV"  # Langsung cetak sinyal cepat
                     
             prv_p1, prv_i1 = cur_p1, cur_i1
             cur_p1, cur_i1 = None, None
@@ -108,15 +110,11 @@ def check_hybrid_bullish_divergence(df):
                 is_macd2_reg = cur_p2 < prv_p2 and cur_i2 > prv_i2
                 is_macd2_hid = cur_p2 > prv_p2 and cur_i2 < prv_i2
                 
-                # Cek Regular & Hidden Divergence berdasarkan konfirmasi Si Cepat
+                # Cek Regular & Hidden Divergence Final
                 if is_macd2_reg:
                     signals[i] = "🔥 STRONG REG DIV" if macd1_reg_ok else "🐢 STD REG DIV"
                 elif is_macd2_hid:
                     signals[i] = "🛡️ STRONG HID DIV" if macd1_hid_ok else "🐢 STD HID DIV"
-                elif macd1_reg_ok:
-                    signals[i] = "⚡ FAST REG DIV"
-                elif macd1_hid_ok:
-                    signals[i] = "⚡ FAST HID DIV"
                     
             prv_p2, prv_i2 = cur_p2, cur_i2
             cur_p2, cur_i2 = None, None
@@ -418,7 +416,7 @@ if st.sidebar.button("Mulai Screening", type="primary"):
                     "ADX": round(adx_now, 2),
                     "+DI": round(plus_di_now, 2),
                     "S.State": s_state,
-                    "MACD (8,21)": round(macd_now, 4), # Label di tabel diubah kembali
+                    "MACD (8,21)": round(macd_now, 4),
                     "Stoch %K": round(k_now, 2)
                 })
         except Exception as e: 
