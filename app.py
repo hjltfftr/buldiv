@@ -332,7 +332,9 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             recent = data.tail(lookback_days)
             matched_signals = []
             
-            close = float(close_series.iloc[-1]) # Pindah ke atas agar bisa diakses untuk % Change
+            close = float(close_series.iloc[-1])
+            ma20_now = float(data["MA20"].iloc[-1])
+            ma50_now = float(data["MA50"].iloc[-1])
             
             # --- EKSTRAKSI TANGGAL DAN CHANGE DIVERGENCE TERAKHIR ---
             div_date_str = "-"
@@ -343,14 +345,17 @@ if st.sidebar.button("Mulai Screening", type="primary"):
                 last_div_idx = all_divs.index[-1]
                 last_div_close = all_divs["Close"].iloc[-1]
                 
-                # Format waktu (tampilkan jam:menit jika timeframe intraday)
                 if "Menit" in tf_choice or "Jam" in tf_choice:
                     div_date_str = last_div_idx.strftime("%Y-%m-%d %H:%M")
                 else:
                     div_date_str = last_div_idx.strftime("%Y-%m-%d")
                     
                 change_pct = ((close - last_div_close) / last_div_close) * 100
-                div_change_str = f"{change_pct:+.2f}%" # "+" akan otomatis muncul jika profit/naik
+                div_change_str = f"{change_pct:+.2f}%"
+                
+            # --- KALKULASI PERSENTASE JARAK DARI MA20 & MA50 ---
+            jarak_ma20_str = f"{((close - ma20_now) / ma20_now) * 100:+.2f}%" if not pd.isna(ma20_now) else "-"
+            jarak_ma50_str = f"{((close - ma50_now) / ma50_now) * 100:+.2f}%" if not pd.isna(ma50_now) else "-"
                 
             # 1. Divergence Hybrid
             if filter_div:
@@ -358,7 +363,7 @@ if st.sidebar.button("Mulai Screening", type="primary"):
                 if recent_signals:
                     matched_signals.extend(list(set(recent_signals)))
             
-            # 2. MACD (Menggunakan MACD1 Cepat 8, 21, 5)
+            # 2. MACD
             macd_now = data["MACD1_LINE"].iloc[-1]
             signal_now = data["MACD1_SIG"].iloc[-1]
             macd_prev = data["MACD1_LINE"].iloc[-2]
@@ -399,8 +404,6 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             ma3_now = float(data["MA3"].iloc[-1])
             ma5_now = float(data["MA5"].iloc[-1])
             ma10_now = float(data["MA10"].iloc[-1])
-            ma20_now = float(data["MA20"].iloc[-1])
-            ma50_now = float(data["MA50"].iloc[-1])
             ma100_now = float(data["MA100"].iloc[-1])
 
             s_state = get_ma_state(close, ma3_now, ma5_now, ma10_now, ma20_now, ma20_now, ma20_now)
@@ -433,7 +436,9 @@ if st.sidebar.button("Mulai Screening", type="primary"):
                     "Tgl Terakhir Div": div_date_str,
                     "Change dr Div": div_change_str,
                     "MA20": round(ma20_now, 2),
+                    "Jarak dr MA20": jarak_ma20_str,
                     "MA50": round(ma50_now, 2),
+                    "Jarak dr MA50": jarak_ma50_str,
                     "ADX": round(adx_now, 2),
                     "+DI": round(plus_di_now, 2),
                     "S.State": s_state,
