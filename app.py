@@ -110,26 +110,36 @@ def check_hybrid_bullish_divergence(df):
     return df
 
 # =========================================
-# FUNCTION MA STATE & PANTULAN
+# FUNCTION MA STATE (RAPAT & MELILIT)
 # =========================================
-def get_ma_state(close, maA, maB, maC, maD, maE, maF):
-    if any(pd.isna(x) for x in [close, maA, maB, maC, maD, maE, maF]):
+def get_ma_state(close, ma_list):
+    """
+    Mengevaluasi kondisi barisan MA.
+    ma_list harus terurut dari periode terkecil ke terbesar (misal: MA3, MA5, MA10, MA20)
+    """
+    if any(pd.isna(x) for x in ma_list):
         return "JAUH"
         
-    ma_list = [maA, maB, maC, maD, maE, maF]
     ma_max = max(ma_list)
     ma_min = min(ma_list)
     spread = (ma_max - ma_min) / close
     
-    bull = (maA > maB) and (maB > maC) and (maC > maD) and (maD > maE) and (maE > maF)
-    bear = (maA < maB) and (maB < maC) and (maC < maD) and (maD < maE) and (maE < maF)
+    # Cek apakah susunannya berurutan sempurna
+    bull = all(ma_list[i] >= ma_list[i+1] for i in range(len(ma_list)-1))
+    bear = all(ma_list[i] <= ma_list[i+1] for i in range(len(ma_list)-1))
     
-    if spread < 0.03 and close > maD: return "MELILIT UP"
-    elif spread < 0.03 and close <= maD: return "MELILIT DOWN"
-    elif bull and spread <= 0.05: return "RAPAT UP"
-    elif bear and spread <= 0.05: return "RAPAT DOWN"
-    elif spread <= 0.07: return "RENGGANG"
-    else: return "JAUH"
+    if spread <= 0.05: # Jarak antar MA saling berdekatan
+        if bull: 
+            return "RAPAT UP"
+        elif bear: 
+            return "RAPAT DOWN"
+        else: 
+            # Jika jarak berdekatan tapi urutan tidak teratur (bertumpuk acak)
+            return "MELILIT" 
+    elif spread <= 0.08:
+        return "RENGGANG"
+    else:
+        return "JAUH"
 
 def count_rejections(recent_df, ma_col, tolerance):
     rejection_count = 0
@@ -156,6 +166,44 @@ def count_rejections(recent_df, ma_col, tolerance):
     return rejection_count
 
 # =========================================
+# FUNCTION IDENTIFIKASI CANDLE TERAKHIR
+# =========================================
+def get_candle_type(open_p, high_p, low_p, close_p):
+    if any(pd.isna(x) for x in [open_p, high_p, low_p, close_p]):
+        return "-"
+        
+    body = close_p - open_p
+    body_abs = abs(body)
+    upper_shadow = high_p - max(open_p, close_p)
+    lower_shadow = min(open_p, close_p) - low_p
+    range_total = high_p - low_p
+    
+    if range_total == 0:
+        return "Flat (Garis)"
+        
+    if body_abs <= range_total * 0.1:
+        return "Doji"
+        
+    if body > 0:
+        if lower_shadow > body_abs * 2 and upper_shadow < body_abs * 0.5:
+            return "Bullish Hammer"
+        elif upper_shadow > body_abs * 2 and lower_shadow < body_abs * 0.5:
+            return "Bullish Inverted Hammer"
+        elif body_abs > range_total * 0.6:
+            return "Strong Bullish (Marubozu)"
+        else:
+            return "Bullish Normal"
+    else:
+        if lower_shadow > body_abs * 2 and upper_shadow < body_abs * 0.5:
+            return "Bearish Hanging Man"
+        elif upper_shadow > body_abs * 2 and lower_shadow < body_abs * 0.5:
+            return "Bearish Shooting Star"
+        elif body_abs > range_total * 0.6:
+            return "Strong Bearish (Marubozu)"
+        else:
+            return "Bearish Normal"
+
+# =========================================
 # UI STREAMLIT
 # =========================================
 st.set_page_config(page_title="Multi-Signal Screener", layout="wide")
@@ -172,8 +220,8 @@ filter_stoch_gc = st.sidebar.checkbox("✅ Stoch RSI Fase GC", value=False)
 filter_bb_buy = st.sidebar.checkbox("📉 BB Buy (Rebound BB Bawah)", value=False)
 filter_bounce_ma20 = st.sidebar.checkbox("🏓 Pantulan MA20", value=False)
 filter_bounce_ma50 = st.sidebar.checkbox("🏓 Pantulan MA50", value=False)
-filter_melilit_up = st.sidebar.checkbox("🌪️ MA Melilit Up & Close > MA (3,5,10,20)", value=False)
-filter_rapat_up = st.sidebar.checkbox("📏 MA Rapat Up & Close > MA (3,5,10,20)", value=False)
+filter_melilit = st.sidebar.checkbox("🌪️ MA Melilit (Bertumpuk/Tidak Rapi & Dekat)", value=False)
+filter_rapat_up = st.sidebar.checkbox("📏 MA Rapat Up (Berurutan Bullish & Dekat)", value=False)
 filter_adx = st.sidebar.checkbox("🚀 ADX Trend Bullish Kuat", value=False)
 
 # ---- FITUR BARU: CLOSE DEKAT MA BESAR ----
@@ -215,7 +263,7 @@ if tf_choice in ["15 Menit", "30 Menit", "1 Jam", "2 Jam", "3 Jam", "4 Jam"]:
 if st.sidebar.button("Mulai Screening", type="primary"):
     # Cek apakah ada minimal 1 filter yang dicentang
     if not any([filter_div, filter_early_gc, filter_gc, filter_stoch_early_gc, filter_stoch_gc, 
-                filter_melilit_up, filter_rapat_up, filter_adx, filter_bb_buy, filter_bounce_ma20, 
+                filter_melilit, filter_rapat_up, filter_adx, filter_bb_buy, filter_bounce_ma20, 
                 filter_bounce_ma50, filter_dekat_ma50, filter_dekat_ma100, filter_dekat_ma200]):
         st.error("⚠️ Silakan centang minimal satu pilihan sinyal di menu sebelah kiri!")
         st.stop()
@@ -265,14 +313,14 @@ if st.sidebar.button("Mulai Screening", type="primary"):
 
             close_series = data["Close"]
             
-            # ---------------- MA CALCULATION (TAMBAH MA200) ----------------
+            # ---------------- MA CALCULATION ----------------
             data["MA3"] = close_series.rolling(3).mean()
             data["MA5"] = close_series.rolling(5).mean()
             data["MA10"] = close_series.rolling(10).mean()
             data["MA20"] = close_series.rolling(20).mean()
             data["MA50"] = close_series.rolling(50).mean()
             data["MA100"] = close_series.rolling(100).mean()
-            data["MA200"] = close_series.rolling(200).mean() # New MA200
+            data["MA200"] = close_series.rolling(200).mean()
             
             data = check_hybrid_bullish_divergence(data)
 
@@ -320,7 +368,14 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             recent = data.tail(lookback_days)
             matched_signals = []
             
+            open_now = float(data["Open"].iloc[-1])
+            high_now = float(data["High"].iloc[-1])
+            low_now = float(data["Low"].iloc[-1])
             close = float(close_series.iloc[-1])
+            
+            # Deteksi bentuk Candle Terakhir
+            last_candle_type = get_candle_type(open_now, high_now, low_now, close)
+            
             ma20_now = float(data["MA20"].iloc[-1])
             ma50_now = float(data["MA50"].iloc[-1])
             ma100_now = float(data["MA100"].iloc[-1])
@@ -383,7 +438,7 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             if filter_bounce_ma50 and bounce_ma50_count > 0:
                 matched_signals.append(f"🏓 MA50 Bnc ({bounce_ma50_count}x)")
 
-            # ---- FITUR BARU: EVALUASI DEKAT MA BESAR ----
+            # ---- FITUR DEKAT MA BESAR ----
             status_dekat_ma = []
             
             if filter_dekat_ma50 and not pd.isna(ma50_now):
@@ -407,22 +462,22 @@ if st.sidebar.button("Mulai Screening", type="primary"):
                     matched_signals.append("🎯 Dkt MA200")
                     status_dekat_ma.append(f"{posisi} MA200 ({jarak_pct:.2f}%)")
 
+            # ---- EVALUASI RAPAT & MELILIT ----
             ma3_now = float(data["MA3"].iloc[-1])
             ma5_now = float(data["MA5"].iloc[-1])
             ma10_now = float(data["MA10"].iloc[-1])
-            ma100_now = float(data["MA100"].iloc[-1])
-
-            s_state = get_ma_state(close, ma3_now, ma5_now, ma10_now, ma20_now, ma20_now, ma20_now)
-            m_state = get_ma_state(close, ma3_now, ma5_now, ma10_now, ma20_now, ma50_now, ma50_now)
-            l_state = get_ma_state(close, ma3_now, ma5_now, ma10_now, ma20_now, ma50_now, ma100_now)
-            all_states = [s_state, m_state, l_state]
             
+            # List MA periode pendek yang dievaluasi urutannya
+            short_mas = [ma3_now, ma5_now, ma10_now, ma20_now]
+            s_state = get_ma_state(close, short_mas)
+            
+            # Khusus untuk sinyal, kita bisa filter apakah harga di atas semua MA tersebut
             price_above_short_mas = (close > ma3_now) and (close > ma5_now) and (close > ma10_now) and (close > ma20_now)
             
-            if filter_melilit_up and "MELILIT UP" in all_states and price_above_short_mas: 
-                matched_signals.append("🌪️ MELILIT UP")
-            if filter_rapat_up and "RAPAT UP" in all_states and price_above_short_mas: 
-                matched_signals.append("📏 RAPAT UP")
+            if filter_melilit and s_state == "MELILIT": 
+                matched_signals.append("🌪️ MA MELILIT")
+            if filter_rapat_up and s_state == "RAPAT UP" and price_above_short_mas: 
+                matched_signals.append("📏 MA RAPAT UP")
                 
             adx_now = data['ADX'].iloc[-1]
             plus_di_now = data['+DI'].iloc[-1]
@@ -436,6 +491,7 @@ if st.sidebar.button("Mulai Screening", type="primary"):
                     "Saham": kode.replace(".JK", ""),
                     "Sektor": sektor_dict.get(kode, "-"),
                     "Sinyal Terdeteksi": " + ".join(matched_signals),
+                    "Candle Terakhir": last_candle_type,
                     "Info Dekat MA (Absolut)": " | ".join(status_dekat_ma) if status_dekat_ma else "-",
                     "Close": close,
                     "Tgl Terakhir Div": div_date_str,
@@ -458,7 +514,6 @@ if st.sidebar.button("Mulai Screening", type="primary"):
     df_hasil = pd.DataFrame(hasil)
     
     if not df_hasil.empty:
-        # Reorder kolom agar informasi MA mudah dibaca
         cols = df_hasil.columns.tolist()
         df_hasil = df_hasil[cols]
         df_hasil = df_hasil.sort_values(by="Saham").reset_index(drop=True)
