@@ -113,10 +113,6 @@ def check_hybrid_bullish_divergence(df):
 # FUNCTION MA STATE (RAPAT & MELILIT)
 # =========================================
 def get_ma_state(close, ma_list):
-    """
-    Mengevaluasi kondisi barisan MA.
-    ma_list harus terurut dari periode terkecil ke terbesar (misal: MA3, MA5, MA10, MA20)
-    """
     if any(pd.isna(x) for x in ma_list):
         return "JAUH"
         
@@ -124,17 +120,15 @@ def get_ma_state(close, ma_list):
     ma_min = min(ma_list)
     spread = (ma_max - ma_min) / close
     
-    # Cek apakah susunannya berurutan sempurna
     bull = all(ma_list[i] >= ma_list[i+1] for i in range(len(ma_list)-1))
     bear = all(ma_list[i] <= ma_list[i+1] for i in range(len(ma_list)-1))
     
-    if spread <= 0.05: # Jarak antar MA saling berdekatan
+    if spread <= 0.05: 
         if bull: 
             return "RAPAT UP"
         elif bear: 
             return "RAPAT DOWN"
         else: 
-            # Jika jarak berdekatan tapi urutan tidak teratur (bertumpuk acak)
             return "MELILIT" 
     elif spread <= 0.08:
         return "RENGGANG"
@@ -151,8 +145,7 @@ def count_rejections(recent_df, ma_col, tolerance):
         close = recent_df["Close"].iloc[i]
         ma = recent_df[ma_col].iloc[i]
 
-        if pd.isna(ma):
-            continue
+        if pd.isna(ma): continue
 
         rejection = (
             (low >= (ma * (1 - tolerance))) and
@@ -204,6 +197,62 @@ def get_candle_type(open_p, high_p, low_p, close_p):
             return "Bearish Normal"
 
 # =========================================
+# FUNCTION LOGIKA VOLUME AKUMULASI (DARI PINE SCRIPT)
+# =========================================
+def get_volume_status(df, length, mult, max_range=15.0, sma_vol_len=20):
+    if len(df) < max(length, sma_vol_len) + 1:
+        return "-"
+        
+    high_s1 = df['High'].shift(1)
+    low_s1 = df['Low'].shift(1)
+
+    hh = high_s1.rolling(length).max()
+    ll = low_s1.rolling(length).min()
+    
+    # Mencegah error pembagian dengan nol
+    ll_safe = np.where(ll == 0, 0.0001, ll)
+    channel_width = ((hh - ll_safe) / ll_safe) * 100
+
+    is_sideways = (df['High'] <= hh) & (df['Low'] >= ll) & (channel_width <= max_range)
+    is_breakout = df['Close'] > hh
+    is_breakdown = df['Close'] < ll
+
+    avg_volume = df['Volume'].rolling(sma_vol_len).mean()
+
+    if mult == 0.0:
+        is_valid_vol = pd.Series(True, index=df.index)
+    else:
+        is_valid_vol = df['Volume'] >= (avg_volume * mult)
+
+    v_beli = np.where(df['Close'] > df['Open'], df['Volume'], np.where(df['Close'] == df['Open'], df['Volume'] / 2, 0))
+    v_jual = np.where(df['Close'] < df['Open'], df['Volume'], np.where(df['Close'] == df['Open'], df['Volume'] / 2, 0))
+
+    f_beli = np.where(is_valid_vol, v_beli, 0)
+    f_jual = np.where(is_valid_vol, v_jual, 0)
+
+    totalBeli = pd.Series(f_beli, index=df.index).rolling(length).sum()
+    totalJual = pd.Series(f_jual, index=df.index).rolling(length).sum()
+
+    is_vol_akum = totalBeli > totalJual
+
+    # Ambil baris data terakhir
+    last_is_breakout = is_breakout.iloc[-1]
+    last_is_sideways = is_sideways.iloc[-1]
+    last_is_breakdown = is_breakdown.iloc[-1]
+    last_is_vol_akum = is_vol_akum.iloc[-1]
+
+    if last_is_breakout and last_is_vol_akum:
+        return "ASCENSION"
+    elif last_is_sideways and last_is_vol_akum:
+        return "AKUMULASI"
+    elif last_is_sideways and not last_is_vol_akum:
+        return "DISTRIBUSI"
+    elif last_is_breakdown:
+        return "MARKDOWN"
+    else:
+        return "NO POLA"
+
+# =========================================
 # UI STREAMLIT
 # =========================================
 st.set_page_config(page_title="Multi-Signal Screener", layout="wide")
@@ -230,6 +279,13 @@ filter_dekat_ma50 = st.sidebar.checkbox("🎯 Close Dekat MA50", value=False)
 filter_dekat_ma100 = st.sidebar.checkbox("🎯 Close Dekat MA100", value=False)
 filter_dekat_ma200 = st.sidebar.checkbox("🎯 Close Dekat MA200", value=False)
 toleransi_ma = st.sidebar.slider("Maksimal Jarak dari MA (%):", min_value=0.1, max_value=10.0, value=2.0, step=0.1)
+
+# ---- FITUR BARU: FILTER VOLUME MATRIKS ----
+st.sidebar.header("📊 Filter Volume Akumulasi")
+vol_mode_str = st.sidebar.selectbox("Pilih Mode Deteksi Volume:", ["Tanpa Filter (0.0x)", "Senyap (1.1x)", "Aktif (1.4x)"])
+filter_vol_5 = st.sidebar.checkbox("✅ Akumulasi/Ascension 5 Bar", value=False)
+filter_vol_10 = st.sidebar.checkbox("✅ Akumulasi/Ascension 10 Bar", value=False)
+filter_vol_20 = st.sidebar.checkbox("✅ Akumulasi/Ascension 20 Bar", value=False)
 
 # Pengaturan Umum
 st.sidebar.header("⚙️ Pengaturan Umum")
@@ -262,11 +318,22 @@ if tf_choice in ["15 Menit", "30 Menit", "1 Jam", "2 Jam", "3 Jam", "4 Jam"]:
 
 if st.sidebar.button("Mulai Screening", type="primary"):
     # Cek apakah ada minimal 1 filter yang dicentang
-    if not any([filter_div, filter_early_gc, filter_gc, filter_stoch_early_gc, filter_stoch_gc, 
-                filter_melilit, filter_rapat_up, filter_adx, filter_bb_buy, filter_bounce_ma20, 
-                filter_bounce_ma50, filter_dekat_ma50, filter_dekat_ma100, filter_dekat_ma200]):
+    all_filters = [
+        filter_div, filter_early_gc, filter_gc, filter_stoch_early_gc, filter_stoch_gc, 
+        filter_melilit, filter_rapat_up, filter_adx, filter_bb_buy, filter_bounce_ma20, 
+        filter_bounce_ma50, filter_dekat_ma50, filter_dekat_ma100, filter_dekat_ma200,
+        filter_vol_5, filter_vol_10, filter_vol_20
+    ]
+    if not any(all_filters):
         st.error("⚠️ Silakan centang minimal satu pilihan sinyal di menu sebelah kiri!")
         st.stop()
+
+    # Set Multiplier Volume sesuai input user
+    vol_mult = 0.0
+    if "Senyap" in vol_mode_str:
+        vol_mult = 1.1
+    elif "Aktif" in vol_mode_str:
+        vol_mult = 1.4
 
     with st.spinner(f"Mengambil data {tf_choice}..."):
         try:
@@ -291,8 +358,7 @@ if st.sidebar.button("Mulai Screening", type="primary"):
     for kode in saham_list:
         try:
             if len(saham_list) > 1:
-                if kode not in daily_data:
-                    continue
+                if kode not in daily_data: continue
                 data = daily_data[kode].copy()
             else:
                 data = daily_data.copy()
@@ -373,7 +439,6 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             low_now = float(data["Low"].iloc[-1])
             close = float(close_series.iloc[-1])
             
-            # Deteksi bentuk Candle Terakhir
             last_candle_type = get_candle_type(open_now, high_now, low_now, close)
             
             ma20_now = float(data["MA20"].iloc[-1])
@@ -388,12 +453,10 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             if not all_divs.empty:
                 last_div_idx = all_divs.index[-1]
                 last_div_close = all_divs["Close"].iloc[-1]
-                
                 if "Menit" in tf_choice or "Jam" in tf_choice:
                     div_date_str = last_div_idx.strftime("%Y-%m-%d %H:%M")
                 else:
                     div_date_str = last_div_idx.strftime("%Y-%m-%d")
-                    
                 change_pct = ((close - last_div_close) / last_div_close) * 100
                 div_change_str = f"{change_pct:+.2f}%"
                 
@@ -440,7 +503,6 @@ if st.sidebar.button("Mulai Screening", type="primary"):
 
             # ---- FITUR DEKAT MA BESAR ----
             status_dekat_ma = []
-            
             if filter_dekat_ma50 and not pd.isna(ma50_now):
                 jarak_pct = abs(close - ma50_now) / ma50_now * 100
                 if jarak_pct <= toleransi_ma:
@@ -467,11 +529,8 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             ma5_now = float(data["MA5"].iloc[-1])
             ma10_now = float(data["MA10"].iloc[-1])
             
-            # List MA periode pendek yang dievaluasi urutannya
             short_mas = [ma3_now, ma5_now, ma10_now, ma20_now]
             s_state = get_ma_state(close, short_mas)
-            
-            # Khusus untuk sinyal, kita bisa filter apakah harga di atas semua MA tersebut
             price_above_short_mas = (close > ma3_now) and (close > ma5_now) and (close > ma10_now) and (close > ma20_now)
             
             if filter_melilit and s_state == "MELILIT": 
@@ -486,12 +545,28 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             if filter_adx and adx_now > 20 and plus_di_now > minus_di_now:
                 matched_signals.append("🚀 ADX BULL")
 
+            # ---- EVALUASI VOLUME MATRIKS ----
+            stat_vol_5 = get_volume_status(data, 5, vol_mult)
+            stat_vol_10 = get_volume_status(data, 10, vol_mult)
+            stat_vol_20 = get_volume_status(data, 20, vol_mult)
+            
+            if filter_vol_5 and stat_vol_5 in ["AKUMULASI", "ASCENSION"]:
+                matched_signals.append(f"📦 Vol 5B ({stat_vol_5})")
+            if filter_vol_10 and stat_vol_10 in ["AKUMULASI", "ASCENSION"]:
+                matched_signals.append(f"📦 Vol 10B ({stat_vol_10})")
+            if filter_vol_20 and stat_vol_20 in ["AKUMULASI", "ASCENSION"]:
+                matched_signals.append(f"📦 Vol 20B ({stat_vol_20})")
+
+            # Simpan hasil jika ada filter yang cocok
             if len(matched_signals) > 0:
                 hasil.append({
                     "Saham": kode.replace(".JK", ""),
                     "Sektor": sektor_dict.get(kode, "-"),
                     "Sinyal Terdeteksi": " + ".join(matched_signals),
                     "Candle Terakhir": last_candle_type,
+                    "Vol 5 Bar (Mode)": stat_vol_5,
+                    "Vol 10 Bar (Mode)": stat_vol_10,
+                    "Vol 20 Bar (Mode)": stat_vol_20,
                     "Info Dekat MA (Absolut)": " | ".join(status_dekat_ma) if status_dekat_ma else "-",
                     "Close": close,
                     "Tgl Terakhir Div": div_date_str,
