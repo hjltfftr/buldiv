@@ -209,7 +209,6 @@ def get_volume_status(df, length, mult, max_range=15.0, sma_vol_len=20):
     hh = high_s1.rolling(length).max()
     ll = low_s1.rolling(length).min()
     
-    # Mencegah error pembagian dengan nol
     ll_safe = np.where(ll == 0, 0.0001, ll)
     channel_width = ((hh - ll_safe) / ll_safe) * 100
 
@@ -235,7 +234,6 @@ def get_volume_status(df, length, mult, max_range=15.0, sma_vol_len=20):
 
     is_vol_akum = totalBeli > totalJual
 
-    # Ambil baris data terakhir
     last_is_breakout = is_breakout.iloc[-1]
     last_is_sideways = is_sideways.iloc[-1]
     last_is_breakdown = is_breakdown.iloc[-1]
@@ -273,14 +271,15 @@ filter_melilit = st.sidebar.checkbox("🌪️ MA Melilit (Bertumpuk/Tidak Rapi &
 filter_rapat_up = st.sidebar.checkbox("📏 MA Rapat Up (Berurutan Bullish & Dekat)", value=False)
 filter_adx = st.sidebar.checkbox("🚀 ADX Trend Bullish Kuat", value=False)
 
-# ---- FITUR BARU: CLOSE DEKAT MA BESAR ----
-st.sidebar.header("🎯 Filter Dekat MA Besar")
+# ---- FILTER DEKAT MA (MA20, MA50, MA100, MA200) ----
+st.sidebar.header("🎯 Filter Dekat MA")
+filter_dekat_ma20 = st.sidebar.checkbox("🎯 Close Dekat MA20", value=False) # Baru ditambahkan
 filter_dekat_ma50 = st.sidebar.checkbox("🎯 Close Dekat MA50", value=False)
 filter_dekat_ma100 = st.sidebar.checkbox("🎯 Close Dekat MA100", value=False)
 filter_dekat_ma200 = st.sidebar.checkbox("🎯 Close Dekat MA200", value=False)
 toleransi_ma = st.sidebar.slider("Maksimal Jarak dari MA (%):", min_value=0.1, max_value=10.0, value=2.0, step=0.1)
 
-# ---- FITUR BARU: FILTER VOLUME MATRIKS ----
+# ---- FILTER VOLUME MATRIKS ----
 st.sidebar.header("📊 Filter Volume Akumulasi")
 vol_mode_str = st.sidebar.selectbox("Pilih Mode Deteksi Volume:", ["Tanpa Filter (0.0x)", "Senyap (1.1x)", "Aktif (1.4x)"])
 filter_vol_5 = st.sidebar.checkbox("✅ Akumulasi/Ascension 5 Bar", value=False)
@@ -321,14 +320,13 @@ if st.sidebar.button("Mulai Screening", type="primary"):
     all_filters = [
         filter_div, filter_early_gc, filter_gc, filter_stoch_early_gc, filter_stoch_gc, 
         filter_melilit, filter_rapat_up, filter_adx, filter_bb_buy, filter_bounce_ma20, 
-        filter_bounce_ma50, filter_dekat_ma50, filter_dekat_ma100, filter_dekat_ma200,
+        filter_bounce_ma50, filter_dekat_ma20, filter_dekat_ma50, filter_dekat_ma100, filter_dekat_ma200,
         filter_vol_5, filter_vol_10, filter_vol_20
     ]
     if not any(all_filters):
         st.error("⚠️ Silakan centang minimal satu pilihan sinyal di menu sebelah kiri!")
         st.stop()
 
-    # Set Multiplier Volume sesuai input user
     vol_mult = 0.0
     if "Senyap" in vol_mode_str:
         vol_mult = 1.1
@@ -475,134 +473,4 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             
             if filter_early_gc and (macd_prev <= signal_prev) and (macd_now > signal_now): 
                 matched_signals.append("⚡ MACD EARLY GC")
-            if filter_gc and macd_now > signal_now: 
-                matched_signals.append("✅ MACD GC")
-                
-            k_now = data["K"].iloc[-1]
-            d_now = data["D"].iloc[-1]
-            k_prev = data["K"].iloc[-2]
-            d_prev = data["D"].iloc[-2]
-            
-            if filter_stoch_early_gc and (k_prev <= d_prev) and (k_now > d_now): 
-                matched_signals.append("⚡ STOCH EARLY GC")
-            if filter_stoch_gc and k_now > d_now: 
-                matched_signals.append("✅ STOCH GC")
-
-            if filter_bb_buy:
-                if recent["BB_Buy"].any():
-                    matched_signals.append("📉 BB BUY")
-
-            bounce_ma20_count = count_rejections(recent, "MA20", 0.01)
-            bounce_ma50_count = count_rejections(recent, "MA50", 0.015)
-            
-            if filter_bounce_ma20 and bounce_ma20_count > 0:
-                matched_signals.append(f"🏓 MA20 Bnc ({bounce_ma20_count}x)")
-                
-            if filter_bounce_ma50 and bounce_ma50_count > 0:
-                matched_signals.append(f"🏓 MA50 Bnc ({bounce_ma50_count}x)")
-
-            # ---- FITUR DEKAT MA BESAR ----
-            status_dekat_ma = []
-            if filter_dekat_ma50 and not pd.isna(ma50_now):
-                jarak_pct = abs(close - ma50_now) / ma50_now * 100
-                if jarak_pct <= toleransi_ma:
-                    posisi = "Atas" if close >= ma50_now else "Bawah"
-                    matched_signals.append("🎯 Dkt MA50")
-                    status_dekat_ma.append(f"{posisi} MA50 ({jarak_pct:.2f}%)")
-
-            if filter_dekat_ma100 and not pd.isna(ma100_now):
-                jarak_pct = abs(close - ma100_now) / ma100_now * 100
-                if jarak_pct <= toleransi_ma:
-                    posisi = "Atas" if close >= ma100_now else "Bawah"
-                    matched_signals.append("🎯 Dkt MA100")
-                    status_dekat_ma.append(f"{posisi} MA100 ({jarak_pct:.2f}%)")
-
-            if filter_dekat_ma200 and not pd.isna(ma200_now):
-                jarak_pct = abs(close - ma200_now) / ma200_now * 100
-                if jarak_pct <= toleransi_ma:
-                    posisi = "Atas" if close >= ma200_now else "Bawah"
-                    matched_signals.append("🎯 Dkt MA200")
-                    status_dekat_ma.append(f"{posisi} MA200 ({jarak_pct:.2f}%)")
-
-            # ---- EVALUASI RAPAT & MELILIT ----
-            ma3_now = float(data["MA3"].iloc[-1])
-            ma5_now = float(data["MA5"].iloc[-1])
-            ma10_now = float(data["MA10"].iloc[-1])
-            
-            short_mas = [ma3_now, ma5_now, ma10_now, ma20_now]
-            s_state = get_ma_state(close, short_mas)
-            price_above_short_mas = (close > ma3_now) and (close > ma5_now) and (close > ma10_now) and (close > ma20_now)
-            
-            if filter_melilit and s_state == "MELILIT": 
-                matched_signals.append("🌪️ MA MELILIT")
-            if filter_rapat_up and s_state == "RAPAT UP" and price_above_short_mas: 
-                matched_signals.append("📏 MA RAPAT UP")
-                
-            adx_now = data['ADX'].iloc[-1]
-            plus_di_now = data['+DI'].iloc[-1]
-            minus_di_now = data['-DI'].iloc[-1]
-            
-            if filter_adx and adx_now > 20 and plus_di_now > minus_di_now:
-                matched_signals.append("🚀 ADX BULL")
-
-            # ---- EVALUASI VOLUME MATRIKS ----
-            stat_vol_5 = get_volume_status(data, 5, vol_mult)
-            stat_vol_10 = get_volume_status(data, 10, vol_mult)
-            stat_vol_20 = get_volume_status(data, 20, vol_mult)
-            
-            if filter_vol_5 and stat_vol_5 in ["AKUMULASI", "ASCENSION"]:
-                matched_signals.append(f"📦 Vol 5B ({stat_vol_5})")
-            if filter_vol_10 and stat_vol_10 in ["AKUMULASI", "ASCENSION"]:
-                matched_signals.append(f"📦 Vol 10B ({stat_vol_10})")
-            if filter_vol_20 and stat_vol_20 in ["AKUMULASI", "ASCENSION"]:
-                matched_signals.append(f"📦 Vol 20B ({stat_vol_20})")
-
-            # Simpan hasil jika ada filter yang cocok
-            if len(matched_signals) > 0:
-                hasil.append({
-                    "Saham": kode.replace(".JK", ""),
-                    "Sektor": sektor_dict.get(kode, "-"),
-                    "Sinyal Terdeteksi": " + ".join(matched_signals),
-                    "Candle Terakhir": last_candle_type,
-                    "Vol 5 Bar (Mode)": stat_vol_5,
-                    "Vol 10 Bar (Mode)": stat_vol_10,
-                    "Vol 20 Bar (Mode)": stat_vol_20,
-                    "Info Dekat MA (Absolut)": " | ".join(status_dekat_ma) if status_dekat_ma else "-",
-                    "Close": close,
-                    "Tgl Terakhir Div": div_date_str,
-                    "Change dr Div": div_change_str,
-                    "MA20": round(ma20_now, 2) if not pd.isna(ma20_now) else "-",
-                    "Jarak dr MA20": jarak_ma20_str,
-                    "MA50": round(ma50_now, 2) if not pd.isna(ma50_now) else "-",
-                    "MA100": round(ma100_now, 2) if not pd.isna(ma100_now) else "-",
-                    "MA200": round(ma200_now, 2) if not pd.isna(ma200_now) else "-",
-                    "Jarak dr MA50": jarak_ma50_str,
-                    "ADX": round(adx_now, 2),
-                    "+DI": round(plus_di_now, 2),
-                    "S.State": s_state,
-                    "MACD (8,21)": round(macd_now, 4),
-                    "Stoch %K": round(k_now, 2)
-                })
-        except Exception as e: 
-            continue 
-
-    df_hasil = pd.DataFrame(hasil)
-    
-    if not df_hasil.empty:
-        cols = df_hasil.columns.tolist()
-        df_hasil = df_hasil[cols]
-        df_hasil = df_hasil.sort_values(by="Saham").reset_index(drop=True)
-        st.success(f"Ditemukan {len(df_hasil)} saham!")
-        st.dataframe(df_hasil)
         
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            df_hasil.to_excel(writer, index=False)
-        st.download_button(
-            label="📥 Download Excel", 
-            data=output.getvalue(), 
-            file_name=f"Screener_Result_{tf_choice.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.xlsx", 
-            mime="application/vnd.ms-excel"
-        )
-    else:
-        st.warning(f"Tidak ada saham yang memenuhi kriteria pada timeframe {tf_choice}.")
