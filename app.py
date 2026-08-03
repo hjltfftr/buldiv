@@ -6,6 +6,7 @@ import requests
 import io
 import warnings
 from datetime import datetime, timedelta, date
+from bs4 import BeautifulSoup
 
 warnings.filterwarnings("ignore")
 
@@ -22,22 +23,30 @@ def get_broksum_status(ticker, start_str, end_str):
     }
     
     try:
-        response = requests.get(url, headers=headers, timeout=5)
+        response = requests.get(url, headers=headers, timeout=8)
         if response.status_code != 200: return "⚠️ Gagal Akses IPOT"
         
+        # Ekstrak Tabel (Dibungkus io.StringIO agar Pandas tidak error)
         try:
-            tables = pd.read_html(response.text)
+            tables = pd.read_html(io.StringIO(response.text))
             df = tables[0]
-            if not df.empty and df.columns[0] == 0: 
+            # Perbaiki header jika terdeteksi sebagai angka/index
+            if not df.empty and (isinstance(df.columns[0], int) or df.columns[0] == 0): 
                 df = df.rename(columns=df.iloc[0]).drop(df.index[0]).reset_index(drop=True)
-        except:
+        except ValueError:
+            # Fallback jika tidak ada tabel HTML (misal hari libur)
             soup = BeautifulSoup(response.text, 'html.parser')
             rows = [[td.text.strip() for td in tr.find_all(['td', 'th'])] for tr in soup.find_all('tr')]
             if len(rows) > 1: df = pd.DataFrame(rows[1:], columns=rows[0])
-            else: return "-"
+            else: return "Tdk Ada Data/Libur"
             
+        # PENCEGAHAN ERROR: Cek apakah kolom Buyer benar-benar ada (biasanya hilang kalau bursa libur)
+        if 'Buyer' not in df.columns or 'Seller' not in df.columns:
+            return "Tdk Ada Data/Libur"
+            
+        # Bersihkan & Kalkulasi
         df_clean = df[df['Buyer'].astype(str).str.len() == 2].copy()
-        if df_clean.empty: return "-"
+        if df_clean.empty: return "Tdk Ada Data/Libur"
         
         def parse_volume(val):
             if pd.isna(val): return 0
@@ -73,7 +82,7 @@ def get_broksum_status(ticker, start_str, end_str):
             return "⚖️ NETRAL"
             
     except Exception as e:
-        return "⚠️ Error Data"
+        return "⚠️ Error Request"
 
 # =========================================
 # FUNGSI LAINNYA
@@ -89,7 +98,7 @@ def get_idx_stocks_from_tradingview():
     }
     headers = {"User-Agent": "Mozilla/5.0"}
     response = requests.post(url, json=payload, headers=headers)
-    if response.status_code != 200: raise Exception(f"Gagal koneksi ke TradingView.")
+    if response.status_code != 200: raise Exception(f"Gagal koneksi ke TradingView. Status: {response.status_code}")
     data = response.json()
     hasil = [{"Kode": item['d'][0], "Sektor": item['d'][1] if item['d'][1] else "Unknown", "TV_Volume": item['d'][2] if item['d'][2] else 0} for item in data.get('data', [])]
     return pd.DataFrame(hasil)
@@ -211,7 +220,7 @@ cek_broksum = st.sidebar.checkbox("📊 Cek Broksum (IPOT)", value=False)
 periode_broksum = "Harian"
 if cek_broksum:
     periode_broksum = st.sidebar.selectbox("Pilih Periode Broksum:", ["Harian", "Mingguan", "Bulanan"])
-    st.sidebar.caption("⚠️ *Fitur ini memperlambat proses karena mengambil data dari web lain.*")
+    st.sidebar.caption("⚠️ *Fitur ini memperlambat proses karena mengambil data transaksi dari web IPOT untuk setiap saham yang lolos filter teknikal.*")
 
 st.sidebar.header("🎯 Pilihan Sinyal Utama")
 filter_div = st.sidebar.checkbox("🔥 Hybrid Bullish Divergence", value=True)
@@ -239,7 +248,6 @@ filter_vol_5 = st.sidebar.checkbox("✅ Akumulasi/Ascension 5 Bar", value=False)
 filter_vol_10 = st.sidebar.checkbox("✅ Akumulasi/Ascension 10 Bar", value=False)
 filter_vol_20 = st.sidebar.checkbox("✅ Akumulasi/Ascension 20 Bar", value=False)
 
-# --- MODIFIKASI: Menambahkan Input Tanggal Screening ---
 st.sidebar.header("⚙️ Pengaturan Umum")
 target_date = st.sidebar.date_input("Pilih Tanggal Screening:", value=date.today())
 list_tf = ["15 Menit", "30 Menit", "1 Jam", "2 Jam", "3 Jam", "4 Jam", "Daily (1 Hari)", "Weekly (1 Minggu)", "Monthly (1 Bulan)"]
@@ -247,7 +255,6 @@ tf_choice = st.sidebar.selectbox("Pilih Timeframe:", list_tf, index=6)
 lookback_days = st.sidebar.slider("Rentang Deteksi (Bar/Candle):", 1, 14, 5)
 min_volume = st.sidebar.number_input("Minimal Rata-rata Volume (Lembar):", value=1_000_000, step=500000)
 
-# MODIFIKASI: Mengganti "period" string dengan estimasi hari mundur (days_back)
 tf_map = {
     "15 Menit": {"interval": "15m", "days_back": 60, "resample": None},
     "30 Menit": {"interval": "30m", "days_back": 60, "resample": None},
@@ -288,9 +295,8 @@ if st.sidebar.button("Mulai Screening", type="primary"):
     hasil = []
     st.info(f"Memproses {len(saham_list)} saham...")
     
-    # MODIFIKASI: Menghitung Start & End Date untuk Yahoo Finance
     start_yf = target_date - timedelta(days=days_back)
-    end_yf = target_date + timedelta(days=1) # +1 agar data di hari "target_date" ikut tertarik (karena di YF end date itu eksklusif)
+    end_yf = target_date + timedelta(days=1) 
 
     try: 
         daily_data = yf.download(
@@ -309,7 +315,7 @@ if st.sidebar.button("Mulai Screening", type="primary"):
     
     progress_bar = st.progress(0)
     
-    # MODIFIKASI: Tanggal Start & End Broksum menyesuaikan target_date dari kalender UI
+    # Kalkulasi Start & End Date untuk Broksum IPOT
     if cek_broksum:
         end_str = target_date.strftime('%m/%d/%Y')
         if periode_broksum == "Harian":
