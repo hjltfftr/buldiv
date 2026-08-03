@@ -5,15 +5,13 @@ import numpy as np
 import requests
 import io
 import warnings
-from datetime import datetime, timedelta # TAMBAHAN: import timedelta
-from bs4 import BeautifulSoup
+from datetime import datetime, timedelta, date
 
 warnings.filterwarnings("ignore")
 
 # =========================================
 # FUNGSI BROKER SUMMARY (BANDARMOLOGI)
 # =========================================
-# MODIFIKASI: Menambahkan parameter start_str dan end_str
 def get_broksum_status(ticker, start_str, end_str):
     """Mengambil dan menyimpulkan status broksum untuk 1 ticker berdasarkan rentang tanggal."""
     url = f"https://www.indopremier.com/module/saham/include/data-brokersummary.php?code={ticker}&start={start_str}&end={end_str}&fd=all&board=all"
@@ -27,7 +25,6 @@ def get_broksum_status(ticker, start_str, end_str):
         response = requests.get(url, headers=headers, timeout=5)
         if response.status_code != 200: return "⚠️ Gagal Akses IPOT"
         
-        # Ekstrak Tabel
         try:
             tables = pd.read_html(response.text)
             df = tables[0]
@@ -39,7 +36,6 @@ def get_broksum_status(ticker, start_str, end_str):
             if len(rows) > 1: df = pd.DataFrame(rows[1:], columns=rows[0])
             else: return "-"
             
-        # Bersihkan & Kalkulasi
         df_clean = df[df['Buyer'].astype(str).str.len() == 2].copy()
         if df_clean.empty: return "-"
         
@@ -80,7 +76,7 @@ def get_broksum_status(ticker, start_str, end_str):
         return "⚠️ Error Data"
 
 # =========================================
-# FUNGSI LAINNYA (TETAP SAMA)
+# FUNGSI LAINNYA
 # =========================================
 def get_idx_stocks_from_tradingview():
     url = "https://scanner.tradingview.com/indonesia/scan"
@@ -93,7 +89,7 @@ def get_idx_stocks_from_tradingview():
     }
     headers = {"User-Agent": "Mozilla/5.0"}
     response = requests.post(url, json=payload, headers=headers)
-    if response.status_code != 200: raise Exception(f"Gagal koneksi ke TradingView. Status: {response.status_code}")
+    if response.status_code != 200: raise Exception(f"Gagal koneksi ke TradingView.")
     data = response.json()
     hasil = [{"Kode": item['d'][0], "Sektor": item['d'][1] if item['d'][1] else "Unknown", "TV_Volume": item['d'][2] if item['d'][2] else 0} for item in data.get('data', [])]
     return pd.DataFrame(hasil)
@@ -210,17 +206,13 @@ def get_volume_status(df, length, mult, max_range=15.0, sma_vol_len=20):
 st.set_page_config(page_title="Multi-Signal Screener", layout="wide")
 st.title("📊 Multi-Signal Screener (Hybrid Divergence, MA & Bandarmologi)")
 
-# --- TAMBAHAN FILTER BANDARMOLOGI ---
 st.sidebar.header("🕵️‍♂️ Fitur Bandarmologi")
 cek_broksum = st.sidebar.checkbox("📊 Cek Broksum (IPOT)", value=False)
-
-# MODIFIKASI: Menambahkan dropdown pilihan periode jika broksum dicentang
 periode_broksum = "Harian"
 if cek_broksum:
     periode_broksum = st.sidebar.selectbox("Pilih Periode Broksum:", ["Harian", "Mingguan", "Bulanan"])
-    st.sidebar.caption("⚠️ *Fitur ini akan memperlambat proses karena mengambil data transaksi dari IPOT untuk setiap saham yang lolos filter teknikal.*")
+    st.sidebar.caption("⚠️ *Fitur ini memperlambat proses karena mengambil data dari web lain.*")
 
-# Pengaturan Sinyal (Checkbox)
 st.sidebar.header("🎯 Pilihan Sinyal Utama")
 filter_div = st.sidebar.checkbox("🔥 Hybrid Bullish Divergence", value=True)
 filter_early_gc = st.sidebar.checkbox("⚡ MACD Early GC (8,21,5)", value=False)
@@ -247,24 +239,27 @@ filter_vol_5 = st.sidebar.checkbox("✅ Akumulasi/Ascension 5 Bar", value=False)
 filter_vol_10 = st.sidebar.checkbox("✅ Akumulasi/Ascension 10 Bar", value=False)
 filter_vol_20 = st.sidebar.checkbox("✅ Akumulasi/Ascension 20 Bar", value=False)
 
+# --- MODIFIKASI: Menambahkan Input Tanggal Screening ---
 st.sidebar.header("⚙️ Pengaturan Umum")
+target_date = st.sidebar.date_input("Pilih Tanggal Screening:", value=date.today())
 list_tf = ["15 Menit", "30 Menit", "1 Jam", "2 Jam", "3 Jam", "4 Jam", "Daily (1 Hari)", "Weekly (1 Minggu)", "Monthly (1 Bulan)"]
 tf_choice = st.sidebar.selectbox("Pilih Timeframe:", list_tf, index=6)
 lookback_days = st.sidebar.slider("Rentang Deteksi (Bar/Candle):", 1, 14, 5)
 min_volume = st.sidebar.number_input("Minimal Rata-rata Volume (Lembar):", value=1_000_000, step=500000)
 
+# MODIFIKASI: Mengganti "period" string dengan estimasi hari mundur (days_back)
 tf_map = {
-    "15 Menit": {"interval": "15m", "period": "60d", "resample": None},
-    "30 Menit": {"interval": "30m", "period": "60d", "resample": None},
-    "1 Jam": {"interval": "1h", "period": "730d", "resample": None},
-    "2 Jam": {"interval": "1h", "period": "730d", "resample": "2h"},
-    "3 Jam": {"interval": "1h", "period": "730d", "resample": "3h"},
-    "4 Jam": {"interval": "1h", "period": "730d", "resample": "4h"},
-    "Daily (1 Hari)": {"interval": "1d", "period": "2y", "resample": None},
-    "Weekly (1 Minggu)": {"interval": "1wk", "period": "5y", "resample": None},
-    "Monthly (1 Bulan)": {"interval": "1mo", "period": "10y", "resample": None}
+    "15 Menit": {"interval": "15m", "days_back": 60, "resample": None},
+    "30 Menit": {"interval": "30m", "days_back": 60, "resample": None},
+    "1 Jam": {"interval": "1h", "days_back": 730, "resample": None},
+    "2 Jam": {"interval": "1h", "days_back": 730, "resample": "2h"},
+    "3 Jam": {"interval": "1h", "days_back": 730, "resample": "3h"},
+    "4 Jam": {"interval": "1h", "days_back": 730, "resample": "4h"},
+    "Daily (1 Hari)": {"interval": "1d", "days_back": 730, "resample": None},
+    "Weekly (1 Minggu)": {"interval": "1wk", "days_back": 1825, "resample": None},
+    "Monthly (1 Bulan)": {"interval": "1mo", "days_back": 3650, "resample": None}
 }
-data_interval, data_period, resample_freq = tf_map[tf_choice]["interval"], tf_map[tf_choice]["period"], tf_map[tf_choice]["resample"]
+data_interval, days_back, resample_freq = tf_map[tf_choice]["interval"], tf_map[tf_choice]["days_back"], tf_map[tf_choice]["resample"]
 
 if st.sidebar.button("Mulai Screening", type="primary"):
     all_filters = [
@@ -279,7 +274,7 @@ if st.sidebar.button("Mulai Screening", type="primary"):
 
     vol_mult = 1.1 if "Senyap" in vol_mode_str else 1.4 if "Aktif" in vol_mode_str else 0.0
 
-    with st.spinner(f"Mengambil data {tf_choice}..."):
+    with st.spinner(f"Mengambil data {tf_choice} hingga {target_date.strftime('%d %b %Y')}..."):
         try:
             excel_df = get_idx_stocks_from_tradingview()
             excel_df = excel_df[excel_df["TV_Volume"] >= min_volume]
@@ -291,26 +286,38 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             st.stop()
             
     hasil = []
-    st.info(f"Memproses {len(saham_list)} saham dengan likuiditas memadai...")
+    st.info(f"Memproses {len(saham_list)} saham...")
     
-    try: daily_data = yf.download(tickers=saham_list, period=data_period, interval=data_interval, group_by="ticker", auto_adjust=False, progress=False, threads=True)
+    # MODIFIKASI: Menghitung Start & End Date untuk Yahoo Finance
+    start_yf = target_date - timedelta(days=days_back)
+    end_yf = target_date + timedelta(days=1) # +1 agar data di hari "target_date" ikut tertarik (karena di YF end date itu eksklusif)
+
+    try: 
+        daily_data = yf.download(
+            tickers=saham_list, 
+            start=start_yf.strftime('%Y-%m-%d'), 
+            end=end_yf.strftime('%Y-%m-%d'), 
+            interval=data_interval, 
+            group_by="ticker", 
+            auto_adjust=False, 
+            progress=False, 
+            threads=True
+        )
     except Exception as e:
         st.error(f"Error Yahoo Finance: {e}")
         st.stop()
     
-    # Progress bar untuk loop analisis saham
     progress_bar = st.progress(0)
     
-    # MODIFIKASI: Menghitung Start & End Date untuk Broksum berdasarkan pilihan
+    # MODIFIKASI: Tanggal Start & End Broksum menyesuaikan target_date dari kalender UI
     if cek_broksum:
-        today_date = datetime.now()
-        end_str = today_date.strftime('%m/%d/%Y')
+        end_str = target_date.strftime('%m/%d/%Y')
         if periode_broksum == "Harian":
             start_str = end_str
         elif periode_broksum == "Mingguan":
-            start_str = (today_date - timedelta(days=7)).strftime('%m/%d/%Y')
+            start_str = (target_date - timedelta(days=7)).strftime('%m/%d/%Y')
         elif periode_broksum == "Bulanan":
-            start_str = (today_date - timedelta(days=30)).strftime('%m/%d/%Y')
+            start_str = (target_date - timedelta(days=30)).strftime('%m/%d/%Y')
     
     for idx, kode in enumerate(saham_list):
         progress_bar.progress((idx + 1) / len(saham_list))
@@ -391,11 +398,9 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             if filter_vol_10 and stat_vol_10 in ["AKUMULASI", "ASCENSION"]: matched_signals.append(f"📦 Vol 10B ({stat_vol_10})")
             if filter_vol_20 and stat_vol_20 in ["AKUMULASI", "ASCENSION"]: matched_signals.append(f"📦 Vol 20B ({stat_vol_20})")
 
-            # --- JIKA SAHAM LOLOS FILTER, CEK BROKSUM JIKA DICENTANG ---
             if len(matched_signals) > 0:
                 ticker_plain = kode.replace(".JK", "")
                 
-                # MODIFIKASI: Memanggil fungsi broksum dengan parameter tanggal
                 broksum_result = "Tdk Dicek"
                 if cek_broksum:
                     broksum_result = get_broksum_status(ticker_plain, start_str, end_str)
@@ -403,7 +408,7 @@ if st.sidebar.button("Mulai Screening", type="primary"):
                 hasil.append({
                     "Saham": ticker_plain,
                     "Sektor": sektor_dict.get(kode, "-"),
-                    f"Status Broksum ({periode_broksum})": broksum_result,  # MODIFIKASI: Nama kolom menyesuaikan periode
+                    f"Status Broksum ({periode_broksum})": broksum_result,
                     "Sinyal Terdeteksi": " + ".join(matched_signals),
                     "Candle Terakhir": last_candle_type,
                     "Vol 5 Bar (Mode)": stat_vol_5,
@@ -419,13 +424,12 @@ if st.sidebar.button("Mulai Screening", type="primary"):
         except Exception as e: 
             continue 
 
-    # Selesai processing
     progress_bar.empty()
     df_hasil = pd.DataFrame(hasil)
     
     if not df_hasil.empty:
         df_hasil = df_hasil.sort_values(by="Saham").reset_index(drop=True)
-        st.success(f"Ditemukan {len(df_hasil)} saham!")
+        st.success(f"Ditemukan {len(df_hasil)} saham untuk tanggal {target_date.strftime('%d %b %Y')}!")
         st.dataframe(df_hasil)
         
         output = io.BytesIO()
@@ -434,8 +438,8 @@ if st.sidebar.button("Mulai Screening", type="primary"):
         st.download_button(
             label="📥 Download Excel", 
             data=output.getvalue(), 
-            file_name=f"Screener_Result_{tf_choice.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.xlsx", 
+            file_name=f"Screener_{target_date.strftime('%Y%m%d')}_{tf_choice.replace(' ', '_')}.xlsx", 
             mime="application/vnd.ms-excel"
         )
     else:
-        st.warning(f"Tidak ada saham yang memenuhi kriteria pada timeframe {tf_choice}.")
+        st.warning(f"Tidak ada saham yang memenuhi kriteria pada timeframe {tf_choice} untuk tanggal {target_date.strftime('%d %b %Y')}.")
