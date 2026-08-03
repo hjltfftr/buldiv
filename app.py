@@ -5,7 +5,7 @@ import numpy as np
 import requests
 import io
 import warnings
-from datetime import datetime
+from datetime import datetime, timedelta # TAMBAHAN: import timedelta
 from bs4 import BeautifulSoup
 
 warnings.filterwarnings("ignore")
@@ -13,20 +13,10 @@ warnings.filterwarnings("ignore")
 # =========================================
 # FUNGSI BROKER SUMMARY (BANDARMOLOGI)
 # =========================================
-def parse_volume(val):
-    if pd.isna(val): return 0
-    val = str(val).strip().upper().replace(',', '')
-    if 'M' in val: return float(val.replace('M', '').strip()) * 1_000_000
-    elif 'B' in val: return float(val.replace('B', '').strip()) * 1_000_000_000
-    elif 'K' in val: return float(val.replace('K', '').strip()) * 1_000
-    try: return float(val)
-    except ValueError: return 0
-
-def get_broksum_status(ticker):
-    """Mengambil dan menyimpulkan status broksum harian untuk 1 ticker."""
-    # Menggunakan tanggal hari ini
-    today_str = datetime.now().strftime('%m/%d/%Y')
-    url = f"https://www.indopremier.com/module/saham/include/data-brokersummary.php?code={ticker}&start={today_str}&end={today_str}&fd=all&board=all"
+# MODIFIKASI: Menambahkan parameter start_str dan end_str
+def get_broksum_status(ticker, start_str, end_str):
+    """Mengambil dan menyimpulkan status broksum untuk 1 ticker berdasarkan rentang tanggal."""
+    url = f"https://www.indopremier.com/module/saham/include/data-brokersummary.php?code={ticker}&start={start_str}&end={end_str}&fd=all&board=all"
     
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
@@ -53,6 +43,15 @@ def get_broksum_status(ticker):
         df_clean = df[df['Buyer'].astype(str).str.len() == 2].copy()
         if df_clean.empty: return "-"
         
+        def parse_volume(val):
+            if pd.isna(val): return 0
+            val = str(val).strip().upper().replace(',', '')
+            if 'M' in val: return float(val.replace('M', '').strip()) * 1_000_000
+            elif 'B' in val: return float(val.replace('B', '').strip()) * 1_000_000_000
+            elif 'K' in val: return float(val.replace('K', '').strip()) * 1_000
+            try: return float(val)
+            except ValueError: return 0
+
         df_buy = df_clean[['Buyer', 'B.Lot']].rename(columns={'Buyer': 'Broker'})
         df_buy['B.Lot'] = df_buy['B.Lot'].apply(parse_volume)
         
@@ -70,11 +69,9 @@ def get_broksum_status(ticker):
         
         if top_3_buy_vol > top_3_sell_vol:
             actors = ", ".join(top_buyers['Broker'].head(3))
-            ratio = top_3_buy_vol / top_3_sell_vol if top_3_sell_vol > 0 else 0
             return f"🔥 AKUMULASI [{actors}]"
         elif top_3_sell_vol > top_3_buy_vol:
             actors = ", ".join(top_sellers['Broker'].head(3))
-            ratio = top_3_sell_vol / top_3_buy_vol if top_3_buy_vol > 0 else 0
             return f"🩸 DISTRIBUSI [{actors}]"
         else:
             return "⚖️ NETRAL"
@@ -215,8 +212,12 @@ st.title("📊 Multi-Signal Screener (Hybrid Divergence, MA & Bandarmologi)")
 
 # --- TAMBAHAN FILTER BANDARMOLOGI ---
 st.sidebar.header("🕵️‍♂️ Fitur Bandarmologi")
-cek_broksum = st.sidebar.checkbox("📊 Cek Broksum Harian (IPOT)", value=False)
+cek_broksum = st.sidebar.checkbox("📊 Cek Broksum (IPOT)", value=False)
+
+# MODIFIKASI: Menambahkan dropdown pilihan periode jika broksum dicentang
+periode_broksum = "Harian"
 if cek_broksum:
+    periode_broksum = st.sidebar.selectbox("Pilih Periode Broksum:", ["Harian", "Mingguan", "Bulanan"])
     st.sidebar.caption("⚠️ *Fitur ini akan memperlambat proses karena mengambil data transaksi dari IPOT untuk setiap saham yang lolos filter teknikal.*")
 
 # Pengaturan Sinyal (Checkbox)
@@ -299,6 +300,17 @@ if st.sidebar.button("Mulai Screening", type="primary"):
     
     # Progress bar untuk loop analisis saham
     progress_bar = st.progress(0)
+    
+    # MODIFIKASI: Menghitung Start & End Date untuk Broksum berdasarkan pilihan
+    if cek_broksum:
+        today_date = datetime.now()
+        end_str = today_date.strftime('%m/%d/%Y')
+        if periode_broksum == "Harian":
+            start_str = end_str
+        elif periode_broksum == "Mingguan":
+            start_str = (today_date - timedelta(days=7)).strftime('%m/%d/%Y')
+        elif periode_broksum == "Bulanan":
+            start_str = (today_date - timedelta(days=30)).strftime('%m/%d/%Y')
     
     for idx, kode in enumerate(saham_list):
         progress_bar.progress((idx + 1) / len(saham_list))
@@ -383,15 +395,15 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             if len(matched_signals) > 0:
                 ticker_plain = kode.replace(".JK", "")
                 
-                # Default Broksum
+                # MODIFIKASI: Memanggil fungsi broksum dengan parameter tanggal
                 broksum_result = "Tdk Dicek"
                 if cek_broksum:
-                    broksum_result = get_broksum_status(ticker_plain)
+                    broksum_result = get_broksum_status(ticker_plain, start_str, end_str)
 
                 hasil.append({
                     "Saham": ticker_plain,
                     "Sektor": sektor_dict.get(kode, "-"),
-                    "Status Broksum (Top 3)": broksum_result,  # <-- KOLOM BARU HASIL ANALISIS BROKSUM
+                    f"Status Broksum ({periode_broksum})": broksum_result,  # MODIFIKASI: Nama kolom menyesuaikan periode
                     "Sinyal Terdeteksi": " + ".join(matched_signals),
                     "Candle Terakhir": last_candle_type,
                     "Vol 5 Bar (Mode)": stat_vol_5,
