@@ -5,10 +5,20 @@ import numpy as np
 import requests
 import io
 import warnings
+import time  # TAMBAHAN: Untuk memberikan jeda waktu (delay)
 from datetime import datetime, timedelta, date
 from bs4 import BeautifulSoup
 
 warnings.filterwarnings("ignore")
+
+# Buat session global untuk IPOT agar koneksi lebih stabil
+ipot_session = requests.Session()
+ipot_session.headers.update({
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9,id;q=0.8",
+    "Connection": "keep-alive"
+})
 
 # =========================================
 # FUNGSI BROKER SUMMARY (BANDARMOLOGI)
@@ -17,34 +27,29 @@ def get_broksum_status(ticker, start_str, end_str):
     """Mengambil dan menyimpulkan status broksum untuk 1 ticker berdasarkan rentang tanggal."""
     url = f"https://www.indopremier.com/module/saham/include/data-brokersummary.php?code={ticker}&start={start_str}&end={end_str}&fd=all&board=all"
     
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-        "Referer": f"https://www.indopremier.com/ipotnews/newsSmartSearch.php?code={ticker}"
-    }
+    # Update referer sesuai ticker
+    ipot_session.headers.update({"Referer": f"https://www.indopremier.com/ipotnews/newsSmartSearch.php?code={ticker}"})
     
     try:
-        response = requests.get(url, headers=headers, timeout=8)
-        if response.status_code != 200: return "⚠️ Gagal Akses IPOT"
+        response = ipot_session.get(url, timeout=10) # Timeout dinaikkan ke 10 detik
         
-        # Ekstrak Tabel (Dibungkus io.StringIO agar Pandas tidak error)
+        if response.status_code != 200: 
+            return f"⚠️ HTTP {response.status_code}"
+            
         try:
             tables = pd.read_html(io.StringIO(response.text))
             df = tables[0]
-            # Perbaiki header jika terdeteksi sebagai angka/index
             if not df.empty and (isinstance(df.columns[0], int) or df.columns[0] == 0): 
                 df = df.rename(columns=df.iloc[0]).drop(df.index[0]).reset_index(drop=True)
         except ValueError:
-            # Fallback jika tidak ada tabel HTML (misal hari libur)
             soup = BeautifulSoup(response.text, 'html.parser')
             rows = [[td.text.strip() for td in tr.find_all(['td', 'th'])] for tr in soup.find_all('tr')]
             if len(rows) > 1: df = pd.DataFrame(rows[1:], columns=rows[0])
             else: return "Tdk Ada Data/Libur"
             
-        # PENCEGAHAN ERROR: Cek apakah kolom Buyer benar-benar ada (biasanya hilang kalau bursa libur)
         if 'Buyer' not in df.columns or 'Seller' not in df.columns:
             return "Tdk Ada Data/Libur"
             
-        # Bersihkan & Kalkulasi
         df_clean = df[df['Buyer'].astype(str).str.len() == 2].copy()
         if df_clean.empty: return "Tdk Ada Data/Libur"
         
@@ -82,7 +87,9 @@ def get_broksum_status(ticker, start_str, end_str):
             return "⚖️ NETRAL"
             
     except Exception as e:
-        return "⚠️ Error Request"
+        # Menampilkan error yang sebenarnya agar mudah dilacak
+        err_msg = str(e)[:15] # Ambil 15 karakter pertama error
+        return f"⚠️ Err: {err_msg}"
 
 # =========================================
 # FUNGSI LAINNYA
@@ -220,7 +227,7 @@ cek_broksum = st.sidebar.checkbox("📊 Cek Broksum (IPOT)", value=False)
 periode_broksum = "Harian"
 if cek_broksum:
     periode_broksum = st.sidebar.selectbox("Pilih Periode Broksum:", ["Harian", "Mingguan", "Bulanan"])
-    st.sidebar.caption("⚠️ *Fitur ini memperlambat proses karena mengambil data transaksi dari web IPOT untuk setiap saham yang lolos filter teknikal.*")
+    st.sidebar.caption("⚠️ *Fitur ini memperlambat proses karena mengambil data transaksi dari web IPOT untuk setiap saham yang lolos filter.*")
 
 st.sidebar.header("🎯 Pilihan Sinyal Utama")
 filter_div = st.sidebar.checkbox("🔥 Hybrid Bullish Divergence", value=True)
@@ -315,7 +322,6 @@ if st.sidebar.button("Mulai Screening", type="primary"):
     
     progress_bar = st.progress(0)
     
-    # Kalkulasi Start & End Date untuk Broksum IPOT
     if cek_broksum:
         end_str = target_date.strftime('%m/%d/%Y')
         if periode_broksum == "Harian":
@@ -409,6 +415,7 @@ if st.sidebar.button("Mulai Screening", type="primary"):
                 
                 broksum_result = "Tdk Dicek"
                 if cek_broksum:
+                    time.sleep(0.5) # TAMBAHAN JEDA 0.5 DETIK AGAR TIDAK KENA BANNED IPOT
                     broksum_result = get_broksum_status(ticker_plain, start_str, end_str)
 
                 hasil.append({
