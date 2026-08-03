@@ -5,13 +5,23 @@ import numpy as np
 import requests
 import io
 import warnings
-import time  # TAMBAHAN: Untuk memberikan jeda waktu (delay)
+import time
+import random
 from datetime import datetime, timedelta, date
 from bs4 import BeautifulSoup
 
 warnings.filterwarnings("ignore")
 
-# Buat session global untuk IPOT agar koneksi lebih stabil
+# =========================================
+# KONFIGURASI PROXY & SESSION IPOT
+# =========================================
+# Masukkan daftar IP Proxy gratis/berbayar Anda di sini. 
+# Jika tidak ingin pakai proxy, biarkan list ini kosong: PROXY_LIST = []
+PROXY_LIST = [
+    # "http://192.168.1.1:8080",  # Contoh format proxy (hapus tanda pagar untuk mengaktifkan)
+    # "http://username:password@192.168.1.2:8080" 
+]
+
 ipot_session = requests.Session()
 ipot_session.headers.update({
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -24,19 +34,25 @@ ipot_session.headers.update({
 # FUNGSI BROKER SUMMARY (BANDARMOLOGI)
 # =========================================
 def get_broksum_status(ticker, start_str, end_str):
-    """Mengambil dan menyimpulkan status broksum untuk 1 ticker berdasarkan rentang tanggal."""
     url = f"https://www.indopremier.com/module/saham/include/data-brokersummary.php?code={ticker}&start={start_str}&end={end_str}&fd=all&board=all"
     
     # Update referer sesuai ticker
     ipot_session.headers.update({"Referer": f"https://www.indopremier.com/ipotnews/newsSmartSearch.php?code={ticker}"})
     
+    # Setup Proxy jika PROXY_LIST tidak kosong
+    proxies = None
+    if PROXY_LIST:
+        selected_proxy = random.choice(PROXY_LIST)
+        proxies = {"http": selected_proxy, "https": selected_proxy}
+    
     try:
-        response = ipot_session.get(url, timeout=10) # Timeout dinaikkan ke 10 detik
+        response = ipot_session.get(url, proxies=proxies, timeout=12) 
         
         if response.status_code != 200: 
             return f"⚠️ HTTP {response.status_code}"
             
         try:
+            # Dibungkus io.StringIO agar lxml/pandas tidak error
             tables = pd.read_html(io.StringIO(response.text))
             df = tables[0]
             if not df.empty and (isinstance(df.columns[0], int) or df.columns[0] == 0): 
@@ -87,8 +103,7 @@ def get_broksum_status(ticker, start_str, end_str):
             return "⚖️ NETRAL"
             
     except Exception as e:
-        # Menampilkan error yang sebenarnya agar mudah dilacak
-        err_msg = str(e)[:15] # Ambil 15 karakter pertama error
+        err_msg = str(e)[:15]
         return f"⚠️ Err: {err_msg}"
 
 # =========================================
@@ -228,6 +243,8 @@ periode_broksum = "Harian"
 if cek_broksum:
     periode_broksum = st.sidebar.selectbox("Pilih Periode Broksum:", ["Harian", "Mingguan", "Bulanan"])
     st.sidebar.caption("⚠️ *Fitur ini memperlambat proses karena mengambil data transaksi dari web IPOT untuk setiap saham yang lolos filter.*")
+    if PROXY_LIST:
+        st.sidebar.success(f"✅ Mode Proxy Aktif ({len(PROXY_LIST)} IPs)")
 
 st.sidebar.header("🎯 Pilihan Sinyal Utama")
 filter_div = st.sidebar.checkbox("🔥 Hybrid Bullish Divergence", value=True)
@@ -415,7 +432,7 @@ if st.sidebar.button("Mulai Screening", type="primary"):
                 
                 broksum_result = "Tdk Dicek"
                 if cek_broksum:
-                    time.sleep(0.5) # TAMBAHAN JEDA 0.5 DETIK AGAR TIDAK KENA BANNED IPOT
+                    time.sleep(0.5) # Jeda waktu agar server IPOT tidak memblokir IP kita
                     broksum_result = get_broksum_status(ticker_plain, start_str, end_str)
 
                 hasil.append({
