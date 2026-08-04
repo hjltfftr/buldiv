@@ -396,8 +396,11 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             last_candle_type = get_candle_type(open_now, high_now, low_now, close)
             ma20_now, ma50_now, ma100_now, ma200_now = float(data["MA20"].iloc[-1]), float(data["MA50"].iloc[-1]), float(data["MA100"].iloc[-1]), float(data["MA200"].iloc[-1])
             
+            tanggal_buldiv = "-"
             if filter_div and recent["Hybrid_Div_Signal"].any():
-                matched_signals.extend(list(set(recent[recent["Hybrid_Div_Signal"] != ""]["Hybrid_Div_Signal"])))
+                df_buldiv = recent[recent["Hybrid_Div_Signal"] != ""]
+                matched_signals.extend(list(set(df_buldiv["Hybrid_Div_Signal"])))
+                tanggal_buldiv = ", ".join(df_buldiv.index.strftime('%Y-%m-%d %H:%M').tolist())
             
             if filter_early_gc and (data["MACD1_LINE"].iloc[-2] <= data["MACD1_SIG"].iloc[-2]) and (data["MACD1_LINE"].iloc[-1] > data["MACD1_SIG"].iloc[-1]): matched_signals.append("⚡ MACD EARLY GC")
             if filter_gc and data["MACD1_LINE"].iloc[-1] > data["MACD1_SIG"].iloc[-1]: matched_signals.append("✅ MACD GC")
@@ -440,6 +443,7 @@ if st.sidebar.button("Mulai Screening", type="primary"):
                     "Sektor": sektor_dict.get(kode, "-"),
                     f"Status Broksum ({periode_broksum})": broksum_result,
                     "Sinyal Terdeteksi": " + ".join(matched_signals),
+                    "Tanggal Buldiv": tanggal_buldiv,
                     "Candle Terakhir": last_candle_type,
                     "Vol 5 Bar (Mode)": stat_vol_5,
                     "Vol 10 Bar (Mode)": stat_vol_10,
