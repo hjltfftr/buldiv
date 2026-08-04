@@ -15,10 +15,8 @@ warnings.filterwarnings("ignore")
 # =========================================
 # KONFIGURASI PROXY & SESSION IPOT
 # =========================================
-# Masukkan daftar IP Proxy gratis/berbayar Anda di sini. 
-# Jika tidak ingin pakai proxy, biarkan list ini kosong: PROXY_LIST = []
 PROXY_LIST = [
-    # "http://192.168.1.1:8080",  # Contoh format proxy (hapus tanda pagar untuk mengaktifkan)
+    # "http://192.168.1.1:8080",  
     # "http://username:password@192.168.1.2:8080" 
 ]
 
@@ -36,10 +34,8 @@ ipot_session.headers.update({
 def get_broksum_status(ticker, start_str, end_str):
     url = f"https://www.indopremier.com/module/saham/include/data-brokersummary.php?code={ticker}&start={start_str}&end={end_str}&fd=all&board=all"
     
-    # Update referer sesuai ticker
     ipot_session.headers.update({"Referer": f"https://www.indopremier.com/ipotnews/newsSmartSearch.php?code={ticker}"})
     
-    # Setup Proxy jika PROXY_LIST tidak kosong
     proxies = None
     if PROXY_LIST:
         selected_proxy = random.choice(PROXY_LIST)
@@ -52,7 +48,6 @@ def get_broksum_status(ticker, start_str, end_str):
             return f"⚠️ HTTP {response.status_code}"
             
         try:
-            # Dibungkus io.StringIO agar lxml/pandas tidak error
             tables = pd.read_html(io.StringIO(response.text))
             df = tables[0]
             if not df.empty and (isinstance(df.columns[0], int) or df.columns[0] == 0): 
@@ -246,6 +241,11 @@ if cek_broksum:
     if PROXY_LIST:
         st.sidebar.success(f"✅ Mode Proxy Aktif ({len(PROXY_LIST)} IPs)")
 
+# --- TAMBAHAN FILTER UPTREND ---
+st.sidebar.header("📈 Filter Khusus Uptrend")
+filter_uptrend = st.sidebar.checkbox("📈 Saham Sedang Uptrend (MA20 > MA50 > MA200)", value=False)
+# -------------------------------
+
 st.sidebar.header("🎯 Pilihan Sinyal Utama")
 filter_div = st.sidebar.checkbox("🔥 Hybrid Bullish Divergence", value=True)
 filter_early_gc = st.sidebar.checkbox("⚡ MACD Early GC (8,21,5)", value=False)
@@ -297,7 +297,7 @@ if st.sidebar.button("Mulai Screening", type="primary"):
         filter_div, filter_early_gc, filter_gc, filter_stoch_early_gc, filter_stoch_gc, 
         filter_melilit, filter_rapat_up, filter_adx, filter_bb_buy, filter_bounce_ma20, 
         filter_bounce_ma50, filter_dekat_ma20, filter_dekat_ma50, filter_dekat_ma100, filter_dekat_ma200,
-        filter_vol_5, filter_vol_10, filter_vol_20
+        filter_vol_5, filter_vol_10, filter_vol_20, filter_uptrend # <-- Ditambahkan di sini agar sistem merespon checkbox
     ]
     if not any(all_filters):
         st.error("⚠️ Silakan centang minimal satu pilihan sinyal di menu sebelah kiri!")
@@ -396,11 +396,42 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             last_candle_type = get_candle_type(open_now, high_now, low_now, close)
             ma20_now, ma50_now, ma100_now, ma200_now = float(data["MA20"].iloc[-1]), float(data["MA50"].iloc[-1]), float(data["MA100"].iloc[-1]), float(data["MA200"].iloc[-1])
             
+            # --- TAMBAHAN LOGIC UPTREND ---
+            is_uptrend = False
+            umur_uptrend = 0
+            change_from_bottom = 0.0
+            kekuatan_uptrend = 0.0
+            
+            # Definisi Uptrend Perfect Alignment: MA20 > MA50 > MA200
+            if not pd.isna(ma200_now):
+                is_uptrend = (ma20_now > ma50_now) and (ma50_now > ma200_now)
+                
+                # Hitung Umur Uptrend (Jumlah bar berturut-turut MA20 > MA50 > MA200)
+                uptrend_condition = (data["MA20"] > data["MA50"]) & (data["MA50"] > data["MA200"])
+                for val in reversed(uptrend_condition.tolist()):
+                    if val:
+                        umur_uptrend += 1
+                    else:
+                        break
+                        
+            # Hitung Change dari Bottom (Low terendah dalam 60 bar terakhir ~ 3 bulan trading)
+            recent_60 = data.tail(60)
+            bottom_price = recent_60["Low"].min()
+            if bottom_price > 0:
+                change_from_bottom = ((close - bottom_price) / bottom_price) * 100
+                
+            # Kekuatan Uptrend (Persentase jarak Close ke MA50)
+            if not pd.isna(ma50_now):
+                kekuatan_uptrend = ((close - ma50_now) / ma50_now) * 100
+            # ------------------------------
+
             tanggal_buldiv = "-"
             if filter_div and recent["Hybrid_Div_Signal"].any():
                 df_buldiv = recent[recent["Hybrid_Div_Signal"] != ""]
                 matched_signals.extend(list(set(df_buldiv["Hybrid_Div_Signal"])))
                 tanggal_buldiv = ", ".join(df_buldiv.index.strftime('%Y-%m-%d %H:%M').tolist())
+            
+            if filter_uptrend and is_uptrend: matched_signals.append("📈 UPTREND")
             
             if filter_early_gc and (data["MACD1_LINE"].iloc[-2] <= data["MACD1_SIG"].iloc[-2]) and (data["MACD1_LINE"].iloc[-1] > data["MACD1_SIG"].iloc[-1]): matched_signals.append("⚡ MACD EARLY GC")
             if filter_gc and data["MACD1_LINE"].iloc[-1] > data["MACD1_SIG"].iloc[-1]: matched_signals.append("✅ MACD GC")
@@ -435,7 +466,7 @@ if st.sidebar.button("Mulai Screening", type="primary"):
                 
                 broksum_result = "Tdk Dicek"
                 if cek_broksum:
-                    time.sleep(0.5) # Jeda waktu agar server IPOT tidak memblokir IP kita
+                    time.sleep(0.5)
                     broksum_result = get_broksum_status(ticker_plain, start_str, end_str)
 
                 hasil.append({
@@ -448,6 +479,12 @@ if st.sidebar.button("Mulai Screening", type="primary"):
                     "Vol 5 Bar (Mode)": stat_vol_5,
                     "Vol 10 Bar (Mode)": stat_vol_10,
                     "Vol 20 Bar (Mode)": stat_vol_20,
+                    # --- KOLOM TAMBAHAN UPTREND ---
+                    "Uptrend Status": "✅ Ya" if is_uptrend else "❌ Tidak",
+                    "Umur Uptrend (Bar)": umur_uptrend,
+                    "Kekuatan Jarak MA50 (%)": round(kekuatan_uptrend, 2),
+                    "Change dr Bottom 60B (%)": round(change_from_bottom, 2),
+                    # ------------------------------
                     "Close": close,
                     "MA20": round(ma20_now, 2) if not pd.isna(ma20_now) else "-",
                     "S.State": s_state,
