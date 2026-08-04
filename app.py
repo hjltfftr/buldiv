@@ -15,10 +15,7 @@ warnings.filterwarnings("ignore")
 # =========================================
 # KONFIGURASI PROXY & SESSION IPOT
 # =========================================
-PROXY_LIST = [
-    # "http://192.168.1.1:8080",  
-    # "http://username:password@192.168.1.2:8080" 
-]
+PROXY_LIST = []
 
 ipot_session = requests.Session()
 ipot_session.headers.update({
@@ -102,7 +99,7 @@ def get_broksum_status(ticker, start_str, end_str):
         return f"⚠️ Err: {err_msg}"
 
 # =========================================
-# FUNGSI LAINNYA
+# FUNGSI LAINNYA & INDIKATOR
 # =========================================
 def get_idx_stocks_from_tradingview():
     url = "https://scanner.tradingview.com/indonesia/scan"
@@ -119,6 +116,31 @@ def get_idx_stocks_from_tradingview():
     data = response.json()
     hasil = [{"Kode": item['d'][0], "Sektor": item['d'][1] if item['d'][1] else "Unknown", "TV_Volume": item['d'][2] if item['d'][2] else 0} for item in data.get('data', [])]
     return pd.DataFrame(hasil)
+
+# --- FUNGSI EVALUASI STRUKTUR HARGA ---
+def evaluate_price_structure(df, period=20):
+    if len(df) < period * 2: 
+        return "Data Kurang"
+    
+    # Membagi data menjadi 2 rentang waktu: Terbaru (20 bar terakhir) vs Sebelumnya (20 bar sebelumnya)
+    recent_data = df.iloc[-period:]
+    prev_data = df.iloc[-(period*2):-period]
+    
+    recent_high, recent_low = recent_data['High'].max(), recent_data['Low'].min()
+    prev_high, prev_low = prev_data['High'].max(), prev_data['Low'].min()
+    
+    is_hh = recent_high > prev_high  # Higher High
+    is_hl = recent_low >= prev_low   # Higher Low
+    
+    if is_hh and is_hl: 
+        return "🟢 Bagus Sekali (HH, HL)"
+    elif not is_hh and not is_hl: 
+        return "🔴 Rusak (LH, LL)"
+    elif not is_hh and is_hl: 
+        return "🟡 Konsolidasi (LH, HL)"
+    else: 
+        return "🟠 Volatil (HH, LL)"
+# --------------------------------------
 
 def check_hybrid_bullish_divergence(df):
     df["MACD1_LINE"] = df["Close"].ewm(span=8, adjust=False).mean() - df["Close"].ewm(span=21, adjust=False).mean()
@@ -241,10 +263,9 @@ if cek_broksum:
     if PROXY_LIST:
         st.sidebar.success(f"✅ Mode Proxy Aktif ({len(PROXY_LIST)} IPs)")
 
-# --- TAMBAHAN FILTER UPTREND ---
-st.sidebar.header("📈 Filter Khusus Uptrend")
+st.sidebar.header("📈 Filter Khusus Uptrend & Struktur")
 filter_uptrend = st.sidebar.checkbox("📈 Saham Sedang Uptrend (MA20 > MA50 > MA200)", value=False)
-# -------------------------------
+filter_struktur = st.sidebar.checkbox("🟢 Hanya Struktur Bagus (HH & HL)", value=False)
 
 st.sidebar.header("🎯 Pilihan Sinyal Utama")
 filter_div = st.sidebar.checkbox("🔥 Hybrid Bullish Divergence", value=True)
@@ -297,7 +318,7 @@ if st.sidebar.button("Mulai Screening", type="primary"):
         filter_div, filter_early_gc, filter_gc, filter_stoch_early_gc, filter_stoch_gc, 
         filter_melilit, filter_rapat_up, filter_adx, filter_bb_buy, filter_bounce_ma20, 
         filter_bounce_ma50, filter_dekat_ma20, filter_dekat_ma50, filter_dekat_ma100, filter_dekat_ma200,
-        filter_vol_5, filter_vol_10, filter_vol_20, filter_uptrend # <-- Ditambahkan di sini agar sistem merespon checkbox
+        filter_vol_5, filter_vol_10, filter_vol_20, filter_uptrend, filter_struktur
     ]
     if not any(all_filters):
         st.error("⚠️ Silakan centang minimal satu pilihan sinyal di menu sebelah kiri!")
@@ -396,34 +417,30 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             last_candle_type = get_candle_type(open_now, high_now, low_now, close)
             ma20_now, ma50_now, ma100_now, ma200_now = float(data["MA20"].iloc[-1]), float(data["MA50"].iloc[-1]), float(data["MA100"].iloc[-1]), float(data["MA200"].iloc[-1])
             
-            # --- TAMBAHAN LOGIC UPTREND ---
+            # --- EVALUASI UPTREND ---
             is_uptrend = False
             umur_uptrend = 0
             change_from_bottom = 0.0
             kekuatan_uptrend = 0.0
             
-            # Definisi Uptrend Perfect Alignment: MA20 > MA50 > MA200
             if not pd.isna(ma200_now):
                 is_uptrend = (ma20_now > ma50_now) and (ma50_now > ma200_now)
-                
-                # Hitung Umur Uptrend (Jumlah bar berturut-turut MA20 > MA50 > MA200)
                 uptrend_condition = (data["MA20"] > data["MA50"]) & (data["MA50"] > data["MA200"])
                 for val in reversed(uptrend_condition.tolist()):
-                    if val:
-                        umur_uptrend += 1
-                    else:
-                        break
+                    if val: umur_uptrend += 1
+                    else: break
                         
-            # Hitung Change dari Bottom (Low terendah dalam 60 bar terakhir ~ 3 bulan trading)
             recent_60 = data.tail(60)
             bottom_price = recent_60["Low"].min()
             if bottom_price > 0:
                 change_from_bottom = ((close - bottom_price) / bottom_price) * 100
                 
-            # Kekuatan Uptrend (Persentase jarak Close ke MA50)
             if not pd.isna(ma50_now):
                 kekuatan_uptrend = ((close - ma50_now) / ma50_now) * 100
-            # ------------------------------
+
+            # --- EVALUASI STRUKTUR ---
+            struktur_harga = evaluate_price_structure(data, period=20)
+            # -------------------------
 
             tanggal_buldiv = "-"
             if filter_div and recent["Hybrid_Div_Signal"].any():
@@ -432,6 +449,7 @@ if st.sidebar.button("Mulai Screening", type="primary"):
                 tanggal_buldiv = ", ".join(df_buldiv.index.strftime('%Y-%m-%d %H:%M').tolist())
             
             if filter_uptrend and is_uptrend: matched_signals.append("📈 UPTREND")
+            if filter_struktur and "Bagus Sekali" in struktur_harga: matched_signals.append("🟢 STRUKTUR HH+HL")
             
             if filter_early_gc and (data["MACD1_LINE"].iloc[-2] <= data["MACD1_SIG"].iloc[-2]) and (data["MACD1_LINE"].iloc[-1] > data["MACD1_SIG"].iloc[-1]): matched_signals.append("⚡ MACD EARLY GC")
             if filter_gc and data["MACD1_LINE"].iloc[-1] > data["MACD1_SIG"].iloc[-1]: matched_signals.append("✅ MACD GC")
@@ -474,23 +492,17 @@ if st.sidebar.button("Mulai Screening", type="primary"):
                     "Sektor": sektor_dict.get(kode, "-"),
                     f"Status Broksum ({periode_broksum})": broksum_result,
                     "Sinyal Terdeteksi": " + ".join(matched_signals),
-                    "Tanggal Buldiv": tanggal_buldiv,
-                    "Candle Terakhir": last_candle_type,
-                    "Vol 5 Bar (Mode)": stat_vol_5,
-                    "Vol 10 Bar (Mode)": stat_vol_10,
-                    "Vol 20 Bar (Mode)": stat_vol_20,
-                    # --- KOLOM TAMBAHAN UPTREND ---
+                    "Struktur Harga (20B vs 20B)": struktur_harga, # Kolom Baru
                     "Uptrend Status": "✅ Ya" if is_uptrend else "❌ Tidak",
                     "Umur Uptrend (Bar)": umur_uptrend,
                     "Kekuatan Jarak MA50 (%)": round(kekuatan_uptrend, 2),
                     "Change dr Bottom 60B (%)": round(change_from_bottom, 2),
-                    # ------------------------------
+                    "Candle Terakhir": last_candle_type,
+                    "Vol 5 Bar (Mode)": stat_vol_5,
                     "Close": close,
                     "MA20": round(ma20_now, 2) if not pd.isna(ma20_now) else "-",
                     "S.State": s_state,
                     "ADX": round(data['ADX'].iloc[-1], 2),
-                    "MACD (8,21)": round(data["MACD1_LINE"].iloc[-1], 4),
-                    "Stoch %K": round(data["K"].iloc[-1], 2)
                 })
         except Exception as e: 
             continue 
