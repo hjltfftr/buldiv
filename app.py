@@ -117,20 +117,18 @@ def get_idx_stocks_from_tradingview():
     hasil = [{"Kode": item['d'][0], "Sektor": item['d'][1] if item['d'][1] else "Unknown", "TV_Volume": item['d'][2] if item['d'][2] else 0} for item in data.get('data', [])]
     return pd.DataFrame(hasil)
 
-# --- FUNGSI EVALUASI STRUKTUR HARGA ---
 def evaluate_price_structure(df, period=20):
     if len(df) < period * 2: 
         return "Data Kurang"
     
-    # Membagi data menjadi 2 rentang waktu: Terbaru (20 bar terakhir) vs Sebelumnya (20 bar sebelumnya)
     recent_data = df.iloc[-period:]
     prev_data = df.iloc[-(period*2):-period]
     
     recent_high, recent_low = recent_data['High'].max(), recent_data['Low'].min()
     prev_high, prev_low = prev_data['High'].max(), prev_data['Low'].min()
     
-    is_hh = recent_high > prev_high  # Higher High
-    is_hl = recent_low >= prev_low   # Higher Low
+    is_hh = recent_high > prev_high  
+    is_hl = recent_low >= prev_low   
     
     if is_hh and is_hl: 
         return "🟢 Bagus Sekali (HH, HL)"
@@ -140,7 +138,6 @@ def evaluate_price_structure(df, period=20):
         return "🟡 Konsolidasi (LH, HL)"
     else: 
         return "🟠 Volatil (HH, LL)"
-# --------------------------------------
 
 def check_hybrid_bullish_divergence(df):
     df["MACD1_LINE"] = df["Close"].ewm(span=8, adjust=False).mean() - df["Close"].ewm(span=21, adjust=False).mean()
@@ -248,6 +245,7 @@ def get_volume_status(df, length, mult, max_range=15.0, sma_vol_len=20):
     elif is_breakdown.iloc[-1]: return "MARKDOWN"
     else: return "NO POLA"
 
+
 # =========================================
 # UI STREAMLIT
 # =========================================
@@ -271,8 +269,18 @@ st.sidebar.header("🎯 Pilihan Sinyal Utama")
 filter_div = st.sidebar.checkbox("🔥 Hybrid Bullish Divergence", value=True)
 filter_early_gc = st.sidebar.checkbox("⚡ MACD Early GC (8,21,5)", value=False)
 filter_gc = st.sidebar.checkbox("✅ MACD Fase GC (8,21,5)", value=False)
+
+st.sidebar.markdown("---")
+filter_rsi_gc = st.sidebar.checkbox("📈 RSI Golden Cross (vs SMA 14)", value=False)
+filter_rsi_oversold = st.sidebar.checkbox(" ↳ Wajib GC di Area Oversold (RSI < 30)", value=False)
+
+st.sidebar.markdown("---")
 filter_stoch_early_gc = st.sidebar.checkbox("⚡ Stoch RSI Early GC", value=False)
 filter_stoch_gc = st.sidebar.checkbox("✅ Stoch RSI Fase GC", value=False)
+stoch_param = st.sidebar.selectbox(" ↳ Parameter Stoch RSI:", ["5, 3, 3", "14, 3, 3"], index=0)
+filter_stoch_oversold = st.sidebar.checkbox(" ↳ Wajib GC di Area Oversold (K < 20)", value=False)
+
+st.sidebar.markdown("---")
 filter_bb_buy = st.sidebar.checkbox("📉 BB Buy (Rebound BB Bawah)", value=False)
 filter_bounce_ma20 = st.sidebar.checkbox("🏓 Pantulan MA20", value=False)
 filter_bounce_ma50 = st.sidebar.checkbox("🏓 Pantulan MA50", value=False)
@@ -315,7 +323,7 @@ data_interval, days_back, resample_freq = tf_map[tf_choice]["interval"], tf_map[
 
 if st.sidebar.button("Mulai Screening", type="primary"):
     all_filters = [
-        filter_div, filter_early_gc, filter_gc, filter_stoch_early_gc, filter_stoch_gc, 
+        filter_div, filter_early_gc, filter_gc, filter_stoch_early_gc, filter_stoch_gc, filter_rsi_gc, 
         filter_melilit, filter_rapat_up, filter_adx, filter_bb_buy, filter_bounce_ma20, 
         filter_bounce_ma50, filter_dekat_ma20, filter_dekat_ma50, filter_dekat_ma100, filter_dekat_ma200,
         filter_vol_5, filter_vol_10, filter_vol_20, filter_uptrend, filter_struktur
@@ -391,8 +399,14 @@ if st.sidebar.button("Mulai Screening", type="primary"):
 
             delta = close_series.diff()
             gain, loss = delta.where(delta > 0, 0).ewm(alpha=1/14, min_periods=14, adjust=False).mean(), (-delta.where(delta < 0, 0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+            
+            # --- Perhitungan Base RSI ---
             data["RSI"] = 100 - (100 / (1 + (gain / loss)))
-            rsi_min, rsi_max = data["RSI"].rolling(5).min(), data["RSI"].rolling(5).max()
+            data["RSI_SMA"] = data["RSI"].rolling(14).mean() # SMA RSI untuk deteksi RSI Golden Cross
+            
+            # --- Perhitungan STOCH RSI ---
+            stoch_len = 5 if stoch_param == "5, 3, 3" else 14
+            rsi_min, rsi_max = data["RSI"].rolling(stoch_len).min(), data["RSI"].rolling(stoch_len).max()
             data["STOCH_RSI"] = ((data["RSI"] - rsi_min) / (rsi_max - rsi_min)) * 100
             data["K"] = data["STOCH_RSI"].rolling(3).mean()
             data["D"] = data["K"].rolling(3).mean()
@@ -453,8 +467,28 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             
             if filter_early_gc and (data["MACD1_LINE"].iloc[-2] <= data["MACD1_SIG"].iloc[-2]) and (data["MACD1_LINE"].iloc[-1] > data["MACD1_SIG"].iloc[-1]): matched_signals.append("⚡ MACD EARLY GC")
             if filter_gc and data["MACD1_LINE"].iloc[-1] > data["MACD1_SIG"].iloc[-1]: matched_signals.append("✅ MACD GC")
-            if filter_stoch_early_gc and (data["K"].iloc[-2] <= data["D"].iloc[-2]) and (data["K"].iloc[-1] > data["D"].iloc[-1]): matched_signals.append("⚡ STOCH EARLY GC")
-            if filter_stoch_gc and data["K"].iloc[-1] > data["D"].iloc[-1]: matched_signals.append("✅ STOCH GC")
+            
+            # --- LOGIKA RSI GC ---
+            if filter_rsi_gc:
+                is_rsi_cross = (data["RSI"].iloc[-2] <= data["RSI_SMA"].iloc[-2]) and (data["RSI"].iloc[-1] > data["RSI_SMA"].iloc[-1])
+                if is_rsi_cross:
+                    if not filter_rsi_oversold or (filter_rsi_oversold and data["RSI"].iloc[-2] < 30):
+                        matched_signals.append("📈 RSI GC")
+
+            # --- LOGIKA STOCH RSI ---
+            prm_label = stoch_param[:2].strip()
+            if filter_stoch_early_gc:
+                is_stoch_cross = (data["K"].iloc[-2] <= data["D"].iloc[-2]) and (data["K"].iloc[-1] > data["D"].iloc[-1])
+                if is_stoch_cross:
+                    if not filter_stoch_oversold or (filter_stoch_oversold and data["K"].iloc[-2] < 20):
+                        matched_signals.append(f"⚡ STOCH EARLY GC ({prm_label})")
+                        
+            if filter_stoch_gc:
+                is_stoch_fase = data["K"].iloc[-1] > data["D"].iloc[-1]
+                if is_stoch_fase:
+                    if not filter_stoch_oversold or (filter_stoch_oversold and data["K"].iloc[-1] < 20):
+                        matched_signals.append(f"✅ STOCH GC ({prm_label})")
+
             if filter_bb_buy and recent["BB_Buy"].any(): matched_signals.append("📉 BB BUY")
 
             bounce_20, bounce_50 = count_rejections(recent, "MA20", 0.01), count_rejections(recent, "MA50", 0.015)
