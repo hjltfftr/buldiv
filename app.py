@@ -245,18 +245,30 @@ def get_volume_status(df, length, mult, max_range=15.0, sma_vol_len=20):
     elif is_breakdown.iloc[-1]: return "MARKDOWN"
     else: return "NO POLA"
 
-
 # =========================================
 # UI STREAMLIT
 # =========================================
 st.set_page_config(page_title="Multi-Signal Screener", layout="wide")
 st.title("📊 Multi-Signal Screener (Hybrid Divergence, MA & Bandarmologi)")
 
+st.sidebar.header("⚙️ Pengaturan Umum")
+target_date = st.sidebar.date_input("Pilih Tanggal Screening:", value=date.today())
+
 st.sidebar.header("🕵️‍♂️ Fitur Bandarmologi")
 cek_broksum = st.sidebar.checkbox("📊 Cek Broksum (IPOT)", value=False)
 periode_broksum = "Harian"
+
+# Penyesuaian Tanggal Akhir Broksum (Handling Sabtu/Minggu)
+broksum_target_date = target_date
+if target_date.weekday() == 5: # Sabtu
+    broksum_target_date = target_date - timedelta(days=1)
+elif target_date.weekday() == 6: # Minggu
+    broksum_target_date = target_date - timedelta(days=2)
+
 if cek_broksum:
     periode_broksum = st.sidebar.selectbox("Pilih Periode Broksum:", ["Harian", "Mingguan", "Bulanan"])
+    if target_date.weekday() in [5, 6]:
+        st.sidebar.info(f"📅 Screening akhir pekan: Broksum disesuaikan ke hari Jumat ({broksum_target_date.strftime('%d %b %Y')}).")
     st.sidebar.caption("⚠️ *Fitur ini memperlambat proses karena mengambil data transaksi dari web IPOT untuk setiap saham yang lolos filter.*")
     if PROXY_LIST:
         st.sidebar.success(f"✅ Mode Proxy Aktif ({len(PROXY_LIST)} IPs)")
@@ -301,8 +313,6 @@ filter_vol_5 = st.sidebar.checkbox("✅ Akumulasi/Ascension 5 Bar", value=False)
 filter_vol_10 = st.sidebar.checkbox("✅ Akumulasi/Ascension 10 Bar", value=False)
 filter_vol_20 = st.sidebar.checkbox("✅ Akumulasi/Ascension 20 Bar", value=False)
 
-st.sidebar.header("⚙️ Pengaturan Umum")
-target_date = st.sidebar.date_input("Pilih Tanggal Screening:", value=date.today())
 list_tf = ["15 Menit", "30 Menit", "1 Jam", "2 Jam", "3 Jam", "4 Jam", "Daily (1 Hari)", "Weekly (1 Minggu)", "Monthly (1 Bulan)"]
 tf_choice = st.sidebar.selectbox("Pilih Timeframe:", list_tf, index=6)
 lookback_days = st.sidebar.slider("Rentang Deteksi (Bar/Candle):", 1, 14, 5)
@@ -368,14 +378,15 @@ if st.sidebar.button("Mulai Screening", type="primary"):
     
     progress_bar = st.progress(0)
     
+    # PERHITUNGAN RENTANG TANGGAL BROKSUM SESUAI OPSI DENGAN HARI ACUAN (JUMAT JIKA SABTU/MINGGU)
     if cek_broksum:
-        end_str = target_date.strftime('%m/%d/%Y')
+        end_str = broksum_target_date.strftime('%m/%d/%Y')
         if periode_broksum == "Harian":
             start_str = end_str
         elif periode_broksum == "Mingguan":
-            start_str = (target_date - timedelta(days=7)).strftime('%m/%d/%Y')
+            start_str = (broksum_target_date - timedelta(days=7)).strftime('%m/%d/%Y')
         elif periode_broksum == "Bulanan":
-            start_str = (target_date - timedelta(days=30)).strftime('%m/%d/%Y')
+            start_str = (broksum_target_date - timedelta(days=30)).strftime('%m/%d/%Y')
     
     for idx, kode in enumerate(saham_list):
         progress_bar.progress((idx + 1) / len(saham_list))
@@ -402,7 +413,7 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             
             # --- Perhitungan Base RSI ---
             data["RSI"] = 100 - (100 / (1 + (gain / loss)))
-            data["RSI_SMA"] = data["RSI"].rolling(14).mean() # SMA RSI untuk deteksi RSI Golden Cross
+            data["RSI_SMA"] = data["RSI"].rolling(14).mean()
             
             # --- Perhitungan STOCH RSI ---
             stoch_len = 5 if stoch_param == "5, 3, 3" else 14
@@ -454,7 +465,6 @@ if st.sidebar.button("Mulai Screening", type="primary"):
 
             # --- EVALUASI STRUKTUR ---
             struktur_harga = evaluate_price_structure(data, period=20)
-            # -------------------------
 
             tanggal_buldiv = "-"
             if filter_div and recent["Hybrid_Div_Signal"].any():
@@ -526,7 +536,7 @@ if st.sidebar.button("Mulai Screening", type="primary"):
                     "Sektor": sektor_dict.get(kode, "-"),
                     f"Status Broksum ({periode_broksum})": broksum_result,
                     "Sinyal Terdeteksi": " + ".join(matched_signals),
-                    "Struktur Harga (20B vs 20B)": struktur_harga, # Kolom Baru
+                    "Struktur Harga (20B vs 20B)": struktur_harga,
                     "Uptrend Status": "✅ Ya" if is_uptrend else "❌ Tidak",
                     "Umur Uptrend (Bar)": umur_uptrend,
                     "Kekuatan Jarak MA50 (%)": round(kekuatan_uptrend, 2),
