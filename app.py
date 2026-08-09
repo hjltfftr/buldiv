@@ -273,6 +273,11 @@ if cek_broksum:
     if PROXY_LIST:
         st.sidebar.success(f"✅ Mode Proxy Aktif ({len(PROXY_LIST)} IPs)")
 
+# --- FITUR BARU: SCREENER PRE-MARKET ---
+st.sidebar.header("🌅 Screener Khusus Pre-Market")
+filter_premarket = st.sidebar.checkbox("🌅 Setup EOD (MA, Vol Spike, MACD, Price Action)", value=False)
+st.sidebar.caption("Skenario ideal disiapkan sore/malam hari: \n1. Volume Spike >1.5x\n2. Momentum (MACD GC atau RSI > 50)\n3. Close kuat (dekat High/Marubozu)\n4. Rebound/Breakout MA20, 50, atau 200.")
+
 st.sidebar.header("📈 Filter Khusus Uptrend & Struktur")
 filter_uptrend = st.sidebar.checkbox("📈 Saham Sedang Uptrend (MA20 > MA50 > MA200)", value=False)
 filter_struktur = st.sidebar.checkbox("🟢 Hanya Struktur Bagus (HH & HL)", value=False)
@@ -336,7 +341,7 @@ if st.sidebar.button("Mulai Screening", type="primary"):
         filter_div, filter_early_gc, filter_gc, filter_stoch_early_gc, filter_stoch_gc, filter_rsi_gc, 
         filter_melilit, filter_rapat_up, filter_adx, filter_bb_buy, filter_bounce_ma20, 
         filter_bounce_ma50, filter_dekat_ma20, filter_dekat_ma50, filter_dekat_ma100, filter_dekat_ma200,
-        filter_vol_5, filter_vol_10, filter_vol_20, filter_uptrend, filter_struktur
+        filter_vol_5, filter_vol_10, filter_vol_20, filter_uptrend, filter_struktur, filter_premarket
     ]
     if not any(all_filters):
         st.error("⚠️ Silakan centang minimal satu pilihan sinyal di menu sebelah kiri!")
@@ -406,6 +411,10 @@ if st.sidebar.button("Mulai Screening", type="primary"):
 
             close_series = data["Close"]
             data["MA3"], data["MA5"], data["MA10"], data["MA20"], data["MA50"], data["MA100"], data["MA200"] = [close_series.rolling(x).mean() for x in [3, 5, 10, 20, 50, 100, 200]]
+            
+            # --- Perhitungan Rata-rata Volume 20 Hari (Kebutuhan Pre-Market) ---
+            data["Vol_MA20"] = data["Volume"].rolling(20).mean()
+            
             data = check_hybrid_bullish_divergence(data)
 
             delta = close_series.diff()
@@ -442,6 +451,31 @@ if st.sidebar.button("Mulai Screening", type="primary"):
             last_candle_type = get_candle_type(open_now, high_now, low_now, close)
             ma20_now, ma50_now, ma100_now, ma200_now = float(data["MA20"].iloc[-1]), float(data["MA50"].iloc[-1]), float(data["MA100"].iloc[-1]), float(data["MA200"].iloc[-1])
             
+            # --- EVALUASI SCREENER PRE-MARKET KHUSUS ---
+            if filter_premarket:
+                # 1. Volume Spike (Hari ini volume lebih dari 1.5x rata-rata 20 hari)
+                vol_spike = data["Volume"].iloc[-1] > (1.5 * data["Vol_MA20"].iloc[-1])
+                
+                # 2. Momentum (MACD baru GC atau RSI sudah di atas 50)
+                macd_gc_pre = (data["MACD1_LINE"].iloc[-2] <= data["MACD1_SIG"].iloc[-2]) and (data["MACD1_LINE"].iloc[-1] > data["MACD1_SIG"].iloc[-1])
+                rsi_bull = data["RSI"].iloc[-1] > 50
+                momentum_ok = macd_gc_pre or rsi_bull
+                
+                # 3. Price Action (Close dekat harga High atau bentuk candle Bullish)
+                range_total_now = high_now - low_now
+                close_strength = ((close - low_now) / range_total_now) if range_total_now > 0 else 0
+                price_action_ok = (close_strength >= 0.9) or ("Bullish" in last_candle_type)
+                
+                # 4. Rebound / Breakout MA (Harga close menembus atau mantul sedikit di atas MA penting)
+                ma_near = False
+                for m_val in [ma20_now, ma50_now, ma200_now]:
+                    if not pd.isna(m_val) and m_val <= close <= (m_val * 1.05): # Max 5% di atas MA
+                        ma_near = True
+                        break
+                        
+                if vol_spike and momentum_ok and price_action_ok and ma_near:
+                    matched_signals.append("🌅 PRE-MARKET SETUP")
+
             # --- EVALUASI UPTREND ---
             is_uptrend = False
             umur_uptrend = 0
