@@ -248,80 +248,83 @@ def get_volume_status(df, length, mult, max_range=15.0, sma_vol_len=20):
 # =========================================
 # UI STREAMLIT
 # =========================================
-st.set_page_config(page_title="Multi-Signal Screener", layout="wide")
-st.title("📊 Multi-Signal Screener (Hybrid Divergence, MA & Bandarmologi)")
+st.set_page_config(page_title="Multi-Signal Screener", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
 
-st.sidebar.header("⚙️ Pengaturan Umum")
-target_date = st.sidebar.date_input("Pilih Tanggal Screening:", value=date.today())
+# Judul Utama
+st.markdown("<h1 style='text-align: center; color: #1E88E5;'>📊 Multi-Signal Screener</h1>", unsafe_allow_html=True)
+st.markdown("<h4 style='text-align: center; color: gray;'>Hybrid Divergence, Moving Average & Bandarmologi (IDX)</h4>", unsafe_allow_html=True)
+st.divider()
 
-st.sidebar.header("🕵️‍♂️ Fitur Bandarmologi")
-cek_broksum = st.sidebar.checkbox("📊 Cek Broksum (IPOT)", value=False)
-periode_broksum = "Harian"
+# Sidebar Configuration
+st.sidebar.title("⚙️ Konfigurasi Screener")
 
-# Penyesuaian Tanggal Akhir Broksum (Handling Sabtu/Minggu)
-broksum_target_date = target_date
-if target_date.weekday() == 5: # Sabtu
-    broksum_target_date = target_date - timedelta(days=1)
-elif target_date.weekday() == 6: # Minggu
-    broksum_target_date = target_date - timedelta(days=2)
+with st.sidebar.expander("📅 Pengaturan Umum & Waktu", expanded=True):
+    target_date = st.date_input("Pilih Tanggal Screening:", value=date.today())
+    list_tf = ["15 Menit", "30 Menit", "1 Jam", "2 Jam", "3 Jam", "4 Jam", "Daily (1 Hari)", "Weekly (1 Minggu)", "Monthly (1 Bulan)"]
+    tf_choice = st.selectbox("Pilih Timeframe:", list_tf, index=6)
+    lookback_days = st.slider("Rentang Deteksi (Bar/Candle):", 1, 14, 5)
+    min_volume = st.number_input("Minimal Rata-rata Volume (Lembar):", value=1_000_000, step=500000)
 
-if cek_broksum:
-    periode_broksum = st.sidebar.selectbox("Pilih Periode Broksum:", ["Harian", "Mingguan", "Bulanan"])
-    if target_date.weekday() in [5, 6]:
-        st.sidebar.info(f"📅 Screening akhir pekan: Broksum disesuaikan ke hari Jumat ({broksum_target_date.strftime('%d %b %Y')}).")
-    st.sidebar.caption("⚠️ *Fitur ini memperlambat proses karena mengambil data transaksi dari web IPOT untuk setiap saham yang lolos filter.*")
-    if PROXY_LIST:
-        st.sidebar.success(f"✅ Mode Proxy Aktif ({len(PROXY_LIST)} IPs)")
+with st.sidebar.expander("🕵️‍♂️ Fitur Bandarmologi (IPOT)", expanded=False):
+    cek_broksum = st.checkbox("📊 Cek Broksum", value=False)
+    periode_broksum = "Harian"
+    
+    # Penyesuaian Tanggal Akhir Broksum
+    broksum_target_date = target_date
+    if target_date.weekday() == 5:
+        broksum_target_date = target_date - timedelta(days=1)
+    elif target_date.weekday() == 6:
+        broksum_target_date = target_date - timedelta(days=2)
 
-# --- FITUR BARU: SCREENER PRE-MARKET ---
-st.sidebar.header("🌅 Screener Khusus Pre-Market")
-filter_premarket = st.sidebar.checkbox("🌅 Setup EOD (MA, Vol Spike, MACD, Price Action)", value=False)
-st.sidebar.caption("Skenario ideal disiapkan sore/malam hari: \n1. Volume Spike >1.5x\n2. Momentum (MACD GC atau RSI > 50)\n3. Close kuat (dekat High/Marubozu)\n4. Rebound/Breakout MA20, 50, atau 200.")
+    if cek_broksum:
+        periode_broksum = st.selectbox("Pilih Periode Broksum:", ["Harian", "Mingguan", "Bulanan"])
+        if target_date.weekday() in [5, 6]:
+            st.info(f"📅 Penyesuaian akhir pekan ke Jumat ({broksum_target_date.strftime('%d %b %Y')}).")
+        st.caption("⚠️ *Mengambil data transaksi memperlambat proses.*")
+        if PROXY_LIST:
+            st.success(f"✅ Proxy Aktif ({len(PROXY_LIST)} IPs)")
 
-st.sidebar.header("📈 Filter Khusus Uptrend & Struktur")
-filter_uptrend = st.sidebar.checkbox("📈 Saham Sedang Uptrend (MA20 > MA50 > MA200)", value=False)
-filter_struktur = st.sidebar.checkbox("🟢 Hanya Struktur Bagus (HH & HL)", value=False)
+with st.sidebar.expander("🌅 Screener Khusus Pre-Market", expanded=False):
+    filter_premarket = st.checkbox("Setup EOD (MA, Vol, MACD, PA)", value=False)
+    st.caption("Skenario ideal disiapkan sore/malam hari: \n1. Vol Spike >1.5x\n2. Momentum (MACD GC / RSI > 50)\n3. Close kuat (High/Marubozu)\n4. Rebound MA penting.")
 
-st.sidebar.header("🎯 Pilihan Sinyal Utama")
-filter_div = st.sidebar.checkbox("🔥 Hybrid Bullish Divergence", value=True)
-filter_early_gc = st.sidebar.checkbox("⚡ MACD Early GC (8,21,5)", value=False)
-filter_gc = st.sidebar.checkbox("✅ MACD Fase GC (8,21,5)", value=False)
+with st.sidebar.expander("🎯 Sinyal Utama (Divergence & MACD)", expanded=True):
+    filter_div = st.checkbox("🔥 Hybrid Bullish Divergence", value=True)
+    filter_early_gc = st.checkbox("⚡ MACD Early GC (8,21,5)", value=False)
+    filter_gc = st.checkbox("✅ MACD Fase GC (8,21,5)", value=False)
 
-st.sidebar.markdown("---")
-filter_rsi_gc = st.sidebar.checkbox("📈 RSI Golden Cross (vs SMA 14)", value=False)
-filter_rsi_oversold = st.sidebar.checkbox(" ↳ Wajib GC di Area Oversold (RSI < 30)", value=False)
+with st.sidebar.expander("📈 RSI & Stochastic RSI", expanded=False):
+    filter_rsi_gc = st.checkbox("📈 RSI Golden Cross (vs SMA 14)", value=False)
+    filter_rsi_oversold = st.checkbox("↳ Wajib GC di Oversold (RSI < 30)", value=False)
+    st.markdown("---")
+    filter_stoch_early_gc = st.checkbox("⚡ Stoch RSI Early GC", value=False)
+    filter_stoch_gc = st.checkbox("✅ Stoch RSI Fase GC", value=False)
+    stoch_param = st.selectbox("Parameter Stoch RSI:", ["5, 3, 3", "14, 3, 3"], index=0)
+    filter_stoch_oversold = st.checkbox("↳ Wajib GC di Oversold (K < 20)", value=False)
 
-st.sidebar.markdown("---")
-filter_stoch_early_gc = st.sidebar.checkbox("⚡ Stoch RSI Early GC", value=False)
-filter_stoch_gc = st.sidebar.checkbox("✅ Stoch RSI Fase GC", value=False)
-stoch_param = st.sidebar.selectbox(" ↳ Parameter Stoch RSI:", ["5, 3, 3", "14, 3, 3"], index=0)
-filter_stoch_oversold = st.sidebar.checkbox(" ↳ Wajib GC di Area Oversold (K < 20)", value=False)
+with st.sidebar.expander("🎯 Indikator Tren & Moving Average", expanded=False):
+    filter_uptrend = st.checkbox("📈 Saham Uptrend (MA20 > MA50 > 200)", value=False)
+    filter_struktur = st.checkbox("🟢 Hanya Struktur Bagus (HH & HL)", value=False)
+    filter_bb_buy = st.checkbox("📉 BB Buy (Rebound BB Bawah)", value=False)
+    filter_bounce_ma20 = st.checkbox("🏓 Pantulan MA20", value=False)
+    filter_bounce_ma50 = st.checkbox("🏓 Pantulan MA50", value=False)
+    filter_melilit = st.checkbox("🌪️ MA Melilit (Bertumpuk)", value=False)
+    filter_rapat_up = st.checkbox("📏 MA Rapat Up", value=False)
+    filter_adx = st.checkbox("🚀 ADX Trend Bullish Kuat", value=False)
 
-st.sidebar.markdown("---")
-filter_bb_buy = st.sidebar.checkbox("📉 BB Buy (Rebound BB Bawah)", value=False)
-filter_bounce_ma20 = st.sidebar.checkbox("🏓 Pantulan MA20", value=False)
-filter_bounce_ma50 = st.sidebar.checkbox("🏓 Pantulan MA50", value=False)
-filter_melilit = st.sidebar.checkbox("🌪️ MA Melilit (Bertumpuk)", value=False)
-filter_rapat_up = st.sidebar.checkbox("📏 MA Rapat Up (Berurutan Bullish)", value=False)
-filter_adx = st.sidebar.checkbox("🚀 ADX Trend Bullish Kuat", value=False)
+with st.sidebar.expander("📏 Filter Dekat MA", expanded=False):
+    filter_dekat_ma20 = st.checkbox("🎯 Close Dekat MA20", value=False)
+    filter_dekat_ma50 = st.checkbox("🎯 Close Dekat MA50", value=False)
+    filter_dekat_ma100 = st.checkbox("🎯 Close Dekat MA100", value=False)
+    filter_dekat_ma200 = st.checkbox("🎯 Close Dekat MA200", value=False)
+    toleransi_ma = st.slider("Maks Jarak dari MA (%):", 0.1, 10.0, 2.0, 0.1)
 
-st.sidebar.header("🎯 Filter Dekat MA")
-filter_dekat_ma20 = st.sidebar.checkbox("🎯 Close Dekat MA20", value=False)
-filter_dekat_ma50 = st.sidebar.checkbox("🎯 Close Dekat MA50", value=False)
-filter_dekat_ma100 = st.sidebar.checkbox("🎯 Close Dekat MA100", value=False)
-filter_dekat_ma200 = st.sidebar.checkbox("🎯 Close Dekat MA200", value=False)
-toleransi_ma = st.sidebar.slider("Maksimal Jarak dari MA (%):", 0.1, 10.0, 2.0, 0.1)
+with st.sidebar.expander("📊 Filter Volume Akumulasi", expanded=False):
+    vol_mode_str = st.selectbox("Mode Deteksi Volume:", ["Tanpa Filter (0.0x)", "Senyap (1.1x)", "Aktif (1.4x)"])
+    filter_vol_5 = st.checkbox("✅ Akumulasi/Ascension 5 Bar", value=False)
+    filter_vol_10 = st.checkbox("✅ Akumulasi/Ascension 10 Bar", value=False)
+    filter_vol_20 = st.checkbox("✅ Akumulasi/Ascension 20 Bar", value=False)
 
-st.sidebar.header("📊 Filter Volume Akumulasi")
-vol_mode_str = st.sidebar.selectbox("Pilih Mode Deteksi Volume:", ["Tanpa Filter (0.0x)", "Senyap (1.1x)", "Aktif (1.4x)"])
-filter_vol_5 = st.sidebar.checkbox("✅ Akumulasi/Ascension 5 Bar", value=False)
-filter_vol_10 = st.sidebar.checkbox("✅ Akumulasi/Ascension 10 Bar", value=False)
-filter_vol_20 = st.sidebar.checkbox("✅ Akumulasi/Ascension 20 Bar", value=False)
-
-list_tf = ["15 Menit", "30 Menit", "1 Jam", "2 Jam", "3 Jam", "4 Jam", "Daily (1 Hari)", "Weekly (1 Minggu)", "Monthly (1 Bulan)"]
-tf_choice = st.sidebar.selectbox("Pilih Timeframe:", list_tf, index=6)
-lookback_days = st.sidebar.slider("Rentang Deteksi (Bar/Candle):", 1, 14, 5)
-min_volume = st.sidebar.number_input("Minimal Rata-rata Volume (Lembar):", value=1_000_000, step=500000)
 
 tf_map = {
     "15 Menit": {"interval": "15m", "days_back": 60, "resample": None},
@@ -336,7 +339,12 @@ tf_map = {
 }
 data_interval, days_back, resample_freq = tf_map[tf_choice]["interval"], tf_map[tf_choice]["days_back"], tf_map[tf_choice]["resample"]
 
-if st.sidebar.button("Mulai Screening", type="primary"):
+# Layout Tombol Eksekusi (Tengah)
+col1, col2, col3 = st.columns([1, 2, 1])
+with col2:
+    start_button = st.button("🚀 MULAI SCREENING SAHAM", type="primary", use_container_width=True)
+
+if start_button:
     all_filters = [
         filter_div, filter_early_gc, filter_gc, filter_stoch_early_gc, filter_stoch_gc, filter_rsi_gc, 
         filter_melilit, filter_rapat_up, filter_adx, filter_bb_buy, filter_bounce_ma20, 
@@ -344,263 +352,257 @@ if st.sidebar.button("Mulai Screening", type="primary"):
         filter_vol_5, filter_vol_10, filter_vol_20, filter_uptrend, filter_struktur, filter_premarket
     ]
     if not any(all_filters):
-        st.error("⚠️ Silakan centang minimal satu pilihan sinyal di menu sebelah kiri!")
+        st.error("⚠️ Silakan centang minimal satu pilihan sinyal di menu sidebar!")
         st.stop()
 
     vol_mult = 1.1 if "Senyap" in vol_mode_str else 1.4 if "Aktif" in vol_mode_str else 0.0
 
-    with st.spinner(f"Mengambil data {tf_choice} hingga {target_date.strftime('%d %b %Y')}..."):
+    with st.status(f"Menganalisa pasar untuk {tf_choice} hingga {target_date.strftime('%d %b %Y')}...", expanded=True) as status:
         try:
+            st.write("Mengunduh daftar saham dari TradingView...")
             excel_df = get_idx_stocks_from_tradingview()
             excel_df = excel_df[excel_df["TV_Volume"] >= min_volume]
             excel_df["Kode_JK"] = excel_df["Kode"].astype(str).str.upper().str.strip() + ".JK"
             sektor_dict = dict(zip(excel_df["Kode_JK"], excel_df["Sektor"]))
             saham_list = sorted(list(set(excel_df["Kode_JK"].tolist())))
         except Exception as e:
-            st.error(f"Error mengambil data TradingView: {e}")
+            status.update(label=f"Gagal mengambil data: {e}", state="error")
             st.stop()
             
-    hasil = []
-    st.info(f"Memproses {len(saham_list)} saham...")
-    
-    start_yf = target_date - timedelta(days=days_back)
-    end_yf = target_date + timedelta(days=1) 
+        hasil = []
+        st.write(f"Mengambil data historis untuk {len(saham_list)} emiten...")
+        
+        start_yf = target_date - timedelta(days=days_back)
+        end_yf = target_date + timedelta(days=1) 
 
-    try: 
-        daily_data = yf.download(
-            tickers=saham_list, 
-            start=start_yf.strftime('%Y-%m-%d'), 
-            end=end_yf.strftime('%Y-%m-%d'), 
-            interval=data_interval, 
-            group_by="ticker", 
-            auto_adjust=False, 
-            progress=False, 
-            threads=True
-        )
-    except Exception as e:
-        st.error(f"Error Yahoo Finance: {e}")
-        st.stop()
-    
-    progress_bar = st.progress(0)
-    
-    # PERHITUNGAN RENTANG TANGGAL BROKSUM SESUAI OPSI DENGAN HARI ACUAN (JUMAT JIKA SABTU/MINGGU)
-    if cek_broksum:
-        end_str = broksum_target_date.strftime('%m/%d/%Y')
-        if periode_broksum == "Harian":
-            start_str = end_str
-        elif periode_broksum == "Mingguan":
-            start_str = (broksum_target_date - timedelta(days=7)).strftime('%m/%d/%Y')
-        elif periode_broksum == "Bulanan":
-            start_str = (broksum_target_date - timedelta(days=30)).strftime('%m/%d/%Y')
-    
-    for idx, kode in enumerate(saham_list):
-        progress_bar.progress((idx + 1) / len(saham_list))
-        try:
-            if len(saham_list) > 1:
-                if kode not in daily_data: continue
-                data = daily_data[kode].copy()
-            else:
-                data = daily_data.copy()
+        try: 
+            daily_data = yf.download(
+                tickers=saham_list, 
+                start=start_yf.strftime('%Y-%m-%d'), 
+                end=end_yf.strftime('%Y-%m-%d'), 
+                interval=data_interval, 
+                group_by="ticker", 
+                auto_adjust=False, 
+                progress=False, 
+                threads=True
+            )
+        except Exception as e:
+            status.update(label=f"Gagal mengambil data Yahoo Finance: {e}", state="error")
+            st.stop()
+        
+        st.write("Memproses indikator dan sinyal tiap emiten...")
+        progress_bar = st.progress(0)
+        
+        if cek_broksum:
+            end_str = broksum_target_date.strftime('%m/%d/%Y')
+            if periode_broksum == "Harian":
+                start_str = end_str
+            elif periode_broksum == "Mingguan":
+                start_str = (broksum_target_date - timedelta(days=7)).strftime('%m/%d/%Y')
+            elif periode_broksum == "Bulanan":
+                start_str = (broksum_target_date - timedelta(days=30)).strftime('%m/%d/%Y')
+        
+        for idx, kode in enumerate(saham_list):
+            progress_bar.progress((idx + 1) / len(saham_list))
+            try:
+                if len(saham_list) > 1:
+                    if kode not in daily_data: continue
+                    data = daily_data[kode].copy()
+                else:
+                    data = daily_data.copy()
+                    
+                data = data.dropna(subset=["Close"])
+                if resample_freq:
+                    data.index = pd.to_datetime(data.index)
+                    data = data.resample(resample_freq).agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}).dropna()
+
+                if len(data) < 100: continue
+
+                close_series = data["Close"]
+                data["MA3"], data["MA5"], data["MA10"], data["MA20"], data["MA50"], data["MA100"], data["MA200"] = [close_series.rolling(x).mean() for x in [3, 5, 10, 20, 50, 100, 200]]
                 
-            data = data.dropna(subset=["Close"])
-            if resample_freq:
-                data.index = pd.to_datetime(data.index)
-                data = data.resample(resample_freq).agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}).dropna()
+                data["Vol_MA20"] = data["Volume"].rolling(20).mean()
+                data = check_hybrid_bullish_divergence(data)
 
-            if len(data) < 100: continue
-
-            close_series = data["Close"]
-            data["MA3"], data["MA5"], data["MA10"], data["MA20"], data["MA50"], data["MA100"], data["MA200"] = [close_series.rolling(x).mean() for x in [3, 5, 10, 20, 50, 100, 200]]
-            
-            # --- Perhitungan Rata-rata Volume 20 Hari (Kebutuhan Pre-Market) ---
-            data["Vol_MA20"] = data["Volume"].rolling(20).mean()
-            
-            data = check_hybrid_bullish_divergence(data)
-
-            delta = close_series.diff()
-            gain, loss = delta.where(delta > 0, 0).ewm(alpha=1/14, min_periods=14, adjust=False).mean(), (-delta.where(delta < 0, 0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-            
-            # --- Perhitungan Base RSI ---
-            data["RSI"] = 100 - (100 / (1 + (gain / loss)))
-            data["RSI_SMA"] = data["RSI"].rolling(14).mean()
-            
-            # --- Perhitungan STOCH RSI ---
-            stoch_len = 5 if stoch_param == "5, 3, 3" else 14
-            rsi_min, rsi_max = data["RSI"].rolling(stoch_len).min(), data["RSI"].rolling(stoch_len).max()
-            data["STOCH_RSI"] = ((data["RSI"] - rsi_min) / (rsi_max - rsi_min)) * 100
-            data["K"] = data["STOCH_RSI"].rolling(3).mean()
-            data["D"] = data["K"].rolling(3).mean()
-
-            tr = pd.concat([data['High'] - data['Low'], (data['High'] - data['Close'].shift(1)).abs(), (data['Low'] - data['Close'].shift(1)).abs()], axis=1).max(axis=1)
-            up_move, down_move = data['High'] - data['High'].shift(1), data['Low'].shift(1) - data['Low']
-            plus_dm = pd.Series(np.where((up_move > down_move) & (up_move > 0), up_move, 0), index=data.index)
-            minus_dm = pd.Series(np.where((down_move > up_move) & (down_move > 0), down_move, 0), index=data.index)
-
-            data['+DI'] = 100 * (plus_dm.ewm(alpha=1/14, adjust=False).mean() / tr.ewm(alpha=1/14, adjust=False).mean())
-            data['-DI'] = 100 * (minus_dm.ewm(alpha=1/14, adjust=False).mean() / tr.ewm(alpha=1/14, adjust=False).mean())
-            data['ADX'] = (100 * (data['+DI'] - data['-DI']).abs() / (data['+DI'] + data['-DI'])).ewm(alpha=1/14, adjust=False).mean()
-
-            data['BB_Lower'] = close_series.rolling(20).mean() - (2.0 * close_series.rolling(20).std(ddof=0))
-            data['BB_Buy'] = (close_series.shift(1) < data['BB_Lower'].shift(1)) & (close_series > data['BB_Lower'])
-
-            # ================= EVALUASI SINYAL =================
-            recent = data.tail(lookback_days)
-            matched_signals = []
-            
-            close, open_now, high_now, low_now = float(close_series.iloc[-1]), float(data["Open"].iloc[-1]), float(data["High"].iloc[-1]), float(data["Low"].iloc[-1])
-            last_candle_type = get_candle_type(open_now, high_now, low_now, close)
-            ma20_now, ma50_now, ma100_now, ma200_now = float(data["MA20"].iloc[-1]), float(data["MA50"].iloc[-1]), float(data["MA100"].iloc[-1]), float(data["MA200"].iloc[-1])
-            
-            # --- EVALUASI SCREENER PRE-MARKET KHUSUS ---
-            if filter_premarket:
-                # 1. Volume Spike (Hari ini volume lebih dari 1.5x rata-rata 20 hari)
-                vol_spike = data["Volume"].iloc[-1] > (1.5 * data["Vol_MA20"].iloc[-1])
+                delta = close_series.diff()
+                gain, loss = delta.where(delta > 0, 0).ewm(alpha=1/14, min_periods=14, adjust=False).mean(), (-delta.where(delta < 0, 0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
                 
-                # 2. Momentum (MACD baru GC atau RSI sudah di atas 50)
-                macd_gc_pre = (data["MACD1_LINE"].iloc[-2] <= data["MACD1_SIG"].iloc[-2]) and (data["MACD1_LINE"].iloc[-1] > data["MACD1_SIG"].iloc[-1])
-                rsi_bull = data["RSI"].iloc[-1] > 50
-                momentum_ok = macd_gc_pre or rsi_bull
+                data["RSI"] = 100 - (100 / (1 + (gain / loss)))
+                data["RSI_SMA"] = data["RSI"].rolling(14).mean()
                 
-                # 3. Price Action (Close dekat harga High atau bentuk candle Bullish)
-                range_total_now = high_now - low_now
-                close_strength = ((close - low_now) / range_total_now) if range_total_now > 0 else 0
-                price_action_ok = (close_strength >= 0.9) or ("Bullish" in last_candle_type)
+                stoch_len = 5 if stoch_param == "5, 3, 3" else 14
+                rsi_min, rsi_max = data["RSI"].rolling(stoch_len).min(), data["RSI"].rolling(stoch_len).max()
+                data["STOCH_RSI"] = ((data["RSI"] - rsi_min) / (rsi_max - rsi_min)) * 100
+                data["K"] = data["STOCH_RSI"].rolling(3).mean()
+                data["D"] = data["K"].rolling(3).mean()
+
+                tr = pd.concat([data['High'] - data['Low'], (data['High'] - data['Close'].shift(1)).abs(), (data['Low'] - data['Close'].shift(1)).abs()], axis=1).max(axis=1)
+                up_move, down_move = data['High'] - data['High'].shift(1), data['Low'].shift(1) - data['Low']
+                plus_dm = pd.Series(np.where((up_move > down_move) & (up_move > 0), up_move, 0), index=data.index)
+                minus_dm = pd.Series(np.where((down_move > up_move) & (down_move > 0), down_move, 0), index=data.index)
+
+                data['+DI'] = 100 * (plus_dm.ewm(alpha=1/14, adjust=False).mean() / tr.ewm(alpha=1/14, adjust=False).mean())
+                data['-DI'] = 100 * (minus_dm.ewm(alpha=1/14, adjust=False).mean() / tr.ewm(alpha=1/14, adjust=False).mean())
+                data['ADX'] = (100 * (data['+DI'] - data['-DI']).abs() / (data['+DI'] + data['-DI'])).ewm(alpha=1/14, adjust=False).mean()
+
+                data['BB_Lower'] = close_series.rolling(20).mean() - (2.0 * close_series.rolling(20).std(ddof=0))
+                data['BB_Buy'] = (close_series.shift(1) < data['BB_Lower'].shift(1)) & (close_series > data['BB_Lower'])
+
+                # ================= EVALUASI SINYAL =================
+                recent = data.tail(lookback_days)
+                matched_signals = []
                 
-                # 4. Rebound / Breakout MA (Harga close menembus atau mantul sedikit di atas MA penting)
-                ma_near = False
-                for m_val in [ma20_now, ma50_now, ma200_now]:
-                    if not pd.isna(m_val) and m_val <= close <= (m_val * 1.05): # Max 5% di atas MA
-                        ma_near = True
-                        break
-                        
-                if vol_spike and momentum_ok and price_action_ok and ma_near:
-                    matched_signals.append("🌅 PRE-MARKET SETUP")
-
-            # --- EVALUASI UPTREND ---
-            is_uptrend = False
-            umur_uptrend = 0
-            change_from_bottom = 0.0
-            kekuatan_uptrend = 0.0
-            
-            if not pd.isna(ma200_now):
-                is_uptrend = (ma20_now > ma50_now) and (ma50_now > ma200_now)
-                uptrend_condition = (data["MA20"] > data["MA50"]) & (data["MA50"] > data["MA200"])
-                for val in reversed(uptrend_condition.tolist()):
-                    if val: umur_uptrend += 1
-                    else: break
-                        
-            recent_60 = data.tail(60)
-            bottom_price = recent_60["Low"].min()
-            if bottom_price > 0:
-                change_from_bottom = ((close - bottom_price) / bottom_price) * 100
+                close, open_now, high_now, low_now = float(close_series.iloc[-1]), float(data["Open"].iloc[-1]), float(data["High"].iloc[-1]), float(data["Low"].iloc[-1])
+                last_candle_type = get_candle_type(open_now, high_now, low_now, close)
+                ma20_now, ma50_now, ma100_now, ma200_now = float(data["MA20"].iloc[-1]), float(data["MA50"].iloc[-1]), float(data["MA100"].iloc[-1]), float(data["MA200"].iloc[-1])
                 
-            if not pd.isna(ma50_now):
-                kekuatan_uptrend = ((close - ma50_now) / ma50_now) * 100
+                if filter_premarket:
+                    vol_spike = data["Volume"].iloc[-1] > (1.5 * data["Vol_MA20"].iloc[-1])
+                    macd_gc_pre = (data["MACD1_LINE"].iloc[-2] <= data["MACD1_SIG"].iloc[-2]) and (data["MACD1_LINE"].iloc[-1] > data["MACD1_SIG"].iloc[-1])
+                    rsi_bull = data["RSI"].iloc[-1] > 50
+                    momentum_ok = macd_gc_pre or rsi_bull
+                    range_total_now = high_now - low_now
+                    close_strength = ((close - low_now) / range_total_now) if range_total_now > 0 else 0
+                    price_action_ok = (close_strength >= 0.9) or ("Bullish" in last_candle_type)
+                    
+                    ma_near = False
+                    for m_val in [ma20_now, ma50_now, ma200_now]:
+                        if not pd.isna(m_val) and m_val <= close <= (m_val * 1.05): 
+                            ma_near = True
+                            break
+                            
+                    if vol_spike and momentum_ok and price_action_ok and ma_near:
+                        matched_signals.append("🌅 PRE-MARKET SETUP")
 
-            # --- EVALUASI STRUKTUR ---
-            struktur_harga = evaluate_price_structure(data, period=20)
-
-            tanggal_buldiv = "-"
-            if filter_div and recent["Hybrid_Div_Signal"].any():
-                df_buldiv = recent[recent["Hybrid_Div_Signal"] != ""]
-                matched_signals.extend(list(set(df_buldiv["Hybrid_Div_Signal"])))
-                tanggal_buldiv = ", ".join(df_buldiv.index.strftime('%Y-%m-%d %H:%M').tolist())
-            
-            if filter_uptrend and is_uptrend: matched_signals.append("📈 UPTREND")
-            if filter_struktur and "Bagus Sekali" in struktur_harga: matched_signals.append("🟢 STRUKTUR HH+HL")
-            
-            if filter_early_gc and (data["MACD1_LINE"].iloc[-2] <= data["MACD1_SIG"].iloc[-2]) and (data["MACD1_LINE"].iloc[-1] > data["MACD1_SIG"].iloc[-1]): matched_signals.append("⚡ MACD EARLY GC")
-            if filter_gc and data["MACD1_LINE"].iloc[-1] > data["MACD1_SIG"].iloc[-1]: matched_signals.append("✅ MACD GC")
-            
-            # --- LOGIKA RSI GC ---
-            if filter_rsi_gc:
-                is_rsi_cross = (data["RSI"].iloc[-2] <= data["RSI_SMA"].iloc[-2]) and (data["RSI"].iloc[-1] > data["RSI_SMA"].iloc[-1])
-                if is_rsi_cross:
-                    if not filter_rsi_oversold or (filter_rsi_oversold and data["RSI"].iloc[-2] < 30):
-                        matched_signals.append("📈 RSI GC")
-
-            # --- LOGIKA STOCH RSI ---
-            prm_label = stoch_param[:2].strip()
-            if filter_stoch_early_gc:
-                is_stoch_cross = (data["K"].iloc[-2] <= data["D"].iloc[-2]) and (data["K"].iloc[-1] > data["D"].iloc[-1])
-                if is_stoch_cross:
-                    if not filter_stoch_oversold or (filter_stoch_oversold and data["K"].iloc[-2] < 20):
-                        matched_signals.append(f"⚡ STOCH EARLY GC ({prm_label})")
-                        
-            if filter_stoch_gc:
-                is_stoch_fase = data["K"].iloc[-1] > data["D"].iloc[-1]
-                if is_stoch_fase:
-                    if not filter_stoch_oversold or (filter_stoch_oversold and data["K"].iloc[-1] < 20):
-                        matched_signals.append(f"✅ STOCH GC ({prm_label})")
-
-            if filter_bb_buy and recent["BB_Buy"].any(): matched_signals.append("📉 BB BUY")
-
-            bounce_20, bounce_50 = count_rejections(recent, "MA20", 0.01), count_rejections(recent, "MA50", 0.015)
-            if filter_bounce_ma20 and bounce_20 > 0: matched_signals.append(f"🏓 MA20 Bnc ({bounce_20}x)")
-            if filter_bounce_ma50 and bounce_50 > 0: matched_signals.append(f"🏓 MA50 Bnc ({bounce_50}x)")
-
-            status_dekat_ma = []
-            for m_filter, m_val, m_name in [(filter_dekat_ma20, ma20_now, "MA20"), (filter_dekat_ma50, ma50_now, "MA50"), (filter_dekat_ma100, ma100_now, "MA100"), (filter_dekat_ma200, ma200_now, "MA200")]:
-                if m_filter and not pd.isna(m_val):
-                    jarak_pct = abs(close - m_val) / m_val * 100
-                    if jarak_pct <= toleransi_ma:
-                        matched_signals.append(f"🎯 Dkt {m_name}")
-                        status_dekat_ma.append(f"{'Atas' if close >= m_val else 'Bawah'} {m_name} ({jarak_pct:.2f}%)")
-
-            s_state = get_ma_state(close, [float(data["MA3"].iloc[-1]), float(data["MA5"].iloc[-1]), float(data["MA10"].iloc[-1]), ma20_now])
-            if filter_melilit and s_state == "MELILIT": matched_signals.append("🌪️ MA MELILIT")
-            if filter_rapat_up and s_state == "RAPAT UP" and close > ma20_now: matched_signals.append("📏 MA RAPAT UP")
-            if filter_adx and data['ADX'].iloc[-1] > 20 and data['+DI'].iloc[-1] > data['-DI'].iloc[-1]: matched_signals.append("🚀 ADX BULL")
-
-            stat_vol_5, stat_vol_10, stat_vol_20 = get_volume_status(data, 5, vol_mult), get_volume_status(data, 10, vol_mult), get_volume_status(data, 20, vol_mult)
-            if filter_vol_5 and stat_vol_5 in ["AKUMULASI", "ASCENSION"]: matched_signals.append(f"📦 Vol 5B ({stat_vol_5})")
-            if filter_vol_10 and stat_vol_10 in ["AKUMULASI", "ASCENSION"]: matched_signals.append(f"📦 Vol 10B ({stat_vol_10})")
-            if filter_vol_20 and stat_vol_20 in ["AKUMULASI", "ASCENSION"]: matched_signals.append(f"📦 Vol 20B ({stat_vol_20})")
-
-            if len(matched_signals) > 0:
-                ticker_plain = kode.replace(".JK", "")
+                is_uptrend = False
+                umur_uptrend = 0
+                change_from_bottom = 0.0
+                kekuatan_uptrend = 0.0
                 
-                broksum_result = "Tdk Dicek"
-                if cek_broksum:
-                    time.sleep(0.5)
-                    broksum_result = get_broksum_status(ticker_plain, start_str, end_str)
+                if not pd.isna(ma200_now):
+                    is_uptrend = (ma20_now > ma50_now) and (ma50_now > ma200_now)
+                    uptrend_condition = (data["MA20"] > data["MA50"]) & (data["MA50"] > data["MA200"])
+                    for val in reversed(uptrend_condition.tolist()):
+                        if val: umur_uptrend += 1
+                        else: break
+                            
+                recent_60 = data.tail(60)
+                bottom_price = recent_60["Low"].min()
+                if bottom_price > 0:
+                    change_from_bottom = ((close - bottom_price) / bottom_price) * 100
+                    
+                if not pd.isna(ma50_now):
+                    kekuatan_uptrend = ((close - ma50_now) / ma50_now) * 100
 
-                hasil.append({
-                    "Saham": ticker_plain,
-                    "Sektor": sektor_dict.get(kode, "-"),
-                    f"Status Broksum ({periode_broksum})": broksum_result,
-                    "Sinyal Terdeteksi": " + ".join(matched_signals),
-                    "Struktur Harga (20B vs 20B)": struktur_harga,
-                    "Uptrend Status": "✅ Ya" if is_uptrend else "❌ Tidak",
-                    "Umur Uptrend (Bar)": umur_uptrend,
-                    "Kekuatan Jarak MA50 (%)": round(kekuatan_uptrend, 2),
-                    "Change dr Bottom 60B (%)": round(change_from_bottom, 2),
-                    "Candle Terakhir": last_candle_type,
-                    "Vol 5 Bar (Mode)": stat_vol_5,
-                    "Close": close,
-                    "MA20": round(ma20_now, 2) if not pd.isna(ma20_now) else "-",
-                    "S.State": s_state,
-                    "ADX": round(data['ADX'].iloc[-1], 2),
-                })
-        except Exception as e: 
-            continue 
+                struktur_harga = evaluate_price_structure(data, period=20)
 
-    progress_bar.empty()
+                if filter_div and recent["Hybrid_Div_Signal"].any():
+                    df_buldiv = recent[recent["Hybrid_Div_Signal"] != ""]
+                    matched_signals.extend(list(set(df_buldiv["Hybrid_Div_Signal"])))
+                
+                if filter_uptrend and is_uptrend: matched_signals.append("📈 UPTREND")
+                if filter_struktur and "Bagus Sekali" in struktur_harga: matched_signals.append("🟢 STRUKTUR HH+HL")
+                
+                if filter_early_gc and (data["MACD1_LINE"].iloc[-2] <= data["MACD1_SIG"].iloc[-2]) and (data["MACD1_LINE"].iloc[-1] > data["MACD1_SIG"].iloc[-1]): matched_signals.append("⚡ MACD EARLY GC")
+                if filter_gc and data["MACD1_LINE"].iloc[-1] > data["MACD1_SIG"].iloc[-1]: matched_signals.append("✅ MACD GC")
+                
+                if filter_rsi_gc:
+                    is_rsi_cross = (data["RSI"].iloc[-2] <= data["RSI_SMA"].iloc[-2]) and (data["RSI"].iloc[-1] > data["RSI_SMA"].iloc[-1])
+                    if is_rsi_cross:
+                        if not filter_rsi_oversold or (filter_rsi_oversold and data["RSI"].iloc[-2] < 30):
+                            matched_signals.append("📈 RSI GC")
+
+                prm_label = stoch_param[:2].strip()
+                if filter_stoch_early_gc:
+                    is_stoch_cross = (data["K"].iloc[-2] <= data["D"].iloc[-2]) and (data["K"].iloc[-1] > data["D"].iloc[-1])
+                    if is_stoch_cross:
+                        if not filter_stoch_oversold or (filter_stoch_oversold and data["K"].iloc[-2] < 20):
+                            matched_signals.append(f"⚡ STOCH EARLY GC ({prm_label})")
+                            
+                if filter_stoch_gc:
+                    is_stoch_fase = data["K"].iloc[-1] > data["D"].iloc[-1]
+                    if is_stoch_fase:
+                        if not filter_stoch_oversold or (filter_stoch_oversold and data["K"].iloc[-1] < 20):
+                            matched_signals.append(f"✅ STOCH GC ({prm_label})")
+
+                if filter_bb_buy and recent["BB_Buy"].any(): matched_signals.append("📉 BB BUY")
+
+                bounce_20, bounce_50 = count_rejections(recent, "MA20", 0.01), count_rejections(recent, "MA50", 0.015)
+                if filter_bounce_ma20 and bounce_20 > 0: matched_signals.append(f"🏓 MA20 Bnc ({bounce_20}x)")
+                if filter_bounce_ma50 and bounce_50 > 0: matched_signals.append(f"🏓 MA50 Bnc ({bounce_50}x)")
+
+                status_dekat_ma = []
+                for m_filter, m_val, m_name in [(filter_dekat_ma20, ma20_now, "MA20"), (filter_dekat_ma50, ma50_now, "MA50"), (filter_dekat_ma100, ma100_now, "MA100"), (filter_dekat_ma200, ma200_now, "MA200")]:
+                    if m_filter and not pd.isna(m_val):
+                        jarak_pct = abs(close - m_val) / m_val * 100
+                        if jarak_pct <= toleransi_ma:
+                            matched_signals.append(f"🎯 Dkt {m_name}")
+                            status_dekat_ma.append(f"{'Atas' if close >= m_val else 'Bawah'} {m_name} ({jarak_pct:.2f}%)")
+
+                s_state = get_ma_state(close, [float(data["MA3"].iloc[-1]), float(data["MA5"].iloc[-1]), float(data["MA10"].iloc[-1]), ma20_now])
+                if filter_melilit and s_state == "MELILIT": matched_signals.append("🌪️ MA MELILIT")
+                if filter_rapat_up and s_state == "RAPAT UP" and close > ma20_now: matched_signals.append("📏 MA RAPAT UP")
+                if filter_adx and data['ADX'].iloc[-1] > 20 and data['+DI'].iloc[-1] > data['-DI'].iloc[-1]: matched_signals.append("🚀 ADX BULL")
+
+                stat_vol_5, stat_vol_10, stat_vol_20 = get_volume_status(data, 5, vol_mult), get_volume_status(data, 10, vol_mult), get_volume_status(data, 20, vol_mult)
+                if filter_vol_5 and stat_vol_5 in ["AKUMULASI", "ASCENSION"]: matched_signals.append(f"📦 Vol 5B ({stat_vol_5})")
+                if filter_vol_10 and stat_vol_10 in ["AKUMULASI", "ASCENSION"]: matched_signals.append(f"📦 Vol 10B ({stat_vol_10})")
+                if filter_vol_20 and stat_vol_20 in ["AKUMULASI", "ASCENSION"]: matched_signals.append(f"📦 Vol 20B ({stat_vol_20})")
+
+                if len(matched_signals) > 0:
+                    ticker_plain = kode.replace(".JK", "")
+                    
+                    broksum_result = "Tdk Dicek"
+                    if cek_broksum:
+                        time.sleep(0.5)
+                        broksum_result = get_broksum_status(ticker_plain, start_str, end_str)
+
+                    hasil.append({
+                        "Saham": ticker_plain,
+                        "Sektor": sektor_dict.get(kode, "-"),
+                        f"Status Broksum ({periode_broksum})": broksum_result,
+                        "Sinyal Terdeteksi": " + ".join(matched_signals),
+                        "Struktur Harga (20B vs 20B)": struktur_harga,
+                        "Uptrend Status": "✅ Ya" if is_uptrend else "❌ Tidak",
+                        "Umur Uptrend (Bar)": umur_uptrend,
+                        "Kekuatan Jarak MA50 (%)": round(kekuatan_uptrend, 2),
+                        "Change dr Bottom 60B (%)": round(change_from_bottom, 2),
+                        "Candle Terakhir": last_candle_type,
+                        "Vol 5 Bar (Mode)": stat_vol_5,
+                        "Close": close,
+                        "MA20": round(ma20_now, 2) if not pd.isna(ma20_now) else "-",
+                        "S.State": s_state,
+                        "ADX": round(data['ADX'].iloc[-1], 2),
+                    })
+            except Exception as e: 
+                continue 
+
+        status.update(label="Selesai menganalisa pasar!", state="complete")
+        progress_bar.empty()
+
+    # Tampilkan Hasil
     df_hasil = pd.DataFrame(hasil)
     
     if not df_hasil.empty:
         df_hasil = df_hasil.sort_values(by="Saham").reset_index(drop=True)
-        st.success(f"Ditemukan {len(df_hasil)} saham untuk tanggal {target_date.strftime('%d %b %Y')}!")
-        st.dataframe(df_hasil)
+        st.success(f"🎉 Pencarian Selesai! Ditemukan **{len(df_hasil)}** saham yang sesuai dengan kriteria pada tanggal **{target_date.strftime('%d %b %Y')}**.")
         
+        # Dataframe dengan lebar mengikuti container
+        st.dataframe(df_hasil, use_container_width=True)
+        
+        # Siapkan Download File
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             df_hasil.to_excel(writer, index=False)
-        st.download_button(
-            label="📥 Download Excel", 
-            data=output.getvalue(), 
-            file_name=f"Screener_{target_date.strftime('%Y%m%d')}_{tf_choice.replace(' ', '_')}.xlsx", 
-            mime="application/vnd.ms-excel"
-        )
+            
+        c1, c2, c3 = st.columns([1,1,1])
+        with c2:
+            st.download_button(
+                label="📥 Download Hasil via Excel", 
+                data=output.getvalue(), 
+                file_name=f"Screener_{target_date.strftime('%Y%m%d')}_{tf_choice.replace(' ', '_')}.xlsx", 
+                mime="application/vnd.ms-excel",
+                use_container_width=True
+            )
     else:
-        st.warning(f"Tidak ada saham yang memenuhi kriteria pada timeframe {tf_choice} untuk tanggal {target_date.strftime('%d %b %Y')}.")
+        st.warning(f"😔 Tidak ada saham yang memenuhi kriteria pada timeframe {tf_choice} untuk tanggal {target_date.strftime('%d %b %Y')}.")
