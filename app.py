@@ -13,12 +13,12 @@ from bs4 import BeautifulSoup
 warnings.filterwarnings("ignore")
 
 # =========================================
-# KONFIGURASI PROXY & SESSION IPOT
+# KONFIGURASI PROXY & SESSION
 # =========================================
 PROXY_LIST = []
 
-ipot_session = requests.Session()
-ipot_session.headers.update({
+broker_session = requests.Session()
+broker_session.headers.update({
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9,id;q=0.8",
@@ -31,7 +31,7 @@ ipot_session.headers.update({
 def get_broksum_status(ticker, start_str, end_str):
     url = f"https://www.indopremier.com/module/saham/include/data-brokersummary.php?code={ticker}&start={start_str}&end={end_str}&fd=all&board=all"
     
-    ipot_session.headers.update({"Referer": f"https://www.indopremier.com/ipotnews/newsSmartSearch.php?code={ticker}"})
+    broker_session.headers.update({"Referer": f"https://www.indopremier.com/ipotnews/newsSmartSearch.php?code={ticker}"})
     
     proxies = None
     if PROXY_LIST:
@@ -39,7 +39,7 @@ def get_broksum_status(ticker, start_str, end_str):
         proxies = {"http": selected_proxy, "https": selected_proxy}
     
     try:
-        response = ipot_session.get(url, proxies=proxies, timeout=12) 
+        response = broker_session.get(url, proxies=proxies, timeout=12) 
         
         if response.status_code != 200: 
             return f"⚠️ HTTP {response.status_code}"
@@ -265,7 +265,7 @@ with st.sidebar.expander("📅 Pengaturan Umum & Waktu", expanded=True):
     lookback_days = st.slider("Rentang Deteksi (Bar/Candle):", 1, 14, 5)
     min_volume = st.number_input("Minimal Rata-rata Volume (Lembar):", value=1_000_000, step=500000)
 
-with st.sidebar.expander("🕵️‍♂️ Fitur Bandarmologi (IPOT)", expanded=False):
+with st.sidebar.expander("🕵️‍♂️ Fitur Bandarmologi", expanded=False):
     cek_broksum = st.checkbox("📊 Cek Broksum", value=False)
     periode_broksum = "Harian"
     
@@ -280,7 +280,7 @@ with st.sidebar.expander("🕵️‍♂️ Fitur Bandarmologi (IPOT)", expanded=
         periode_broksum = st.selectbox("Pilih Periode Broksum:", ["Harian", "Mingguan", "Bulanan"])
         if target_date.weekday() in [5, 6]:
             st.info(f"📅 Penyesuaian akhir pekan ke Jumat ({broksum_target_date.strftime('%d %b %Y')}).")
-        st.caption("⚠️ *Mengambil data transaksi memperlambat proses.*")
+        st.caption("⚠️ *Mengambil data transaksi memperlambat proses secara signifikan.*")
         if PROXY_LIST:
             st.success(f"✅ Proxy Aktif ({len(PROXY_LIST)} IPs)")
 
@@ -302,15 +302,17 @@ with st.sidebar.expander("📈 RSI & Stochastic RSI", expanded=False):
     stoch_param = st.selectbox("Parameter Stoch RSI:", ["5, 3, 3", "14, 3, 3"], index=0)
     filter_stoch_oversold = st.checkbox("↳ Wajib GC di Oversold (K < 20)", value=False)
 
-with st.sidebar.expander("🎯 Indikator Tren & Moving Average", expanded=False):
+with st.sidebar.expander("🎯 Indikator Tren & Struktur Harga", expanded=False):
     filter_uptrend = st.checkbox("📈 Saham Uptrend (MA20 > MA50 > 200)", value=False)
     filter_struktur = st.checkbox("🟢 Hanya Struktur Bagus (HH & HL)", value=False)
     filter_bb_buy = st.checkbox("📉 BB Buy (Rebound BB Bawah)", value=False)
     filter_bounce_ma20 = st.checkbox("🏓 Pantulan MA20", value=False)
     filter_bounce_ma50 = st.checkbox("🏓 Pantulan MA50", value=False)
+    filter_adx = st.checkbox("🚀 ADX Trend Bullish Kuat", value=False)
+
+with st.sidebar.expander("🌪️ MA Rapat & Melilit", expanded=False):
     filter_melilit = st.checkbox("🌪️ MA Melilit (Bertumpuk)", value=False)
     filter_rapat_up = st.checkbox("📏 MA Rapat Up", value=False)
-    filter_adx = st.checkbox("🚀 ADX Trend Bullish Kuat", value=False)
 
 with st.sidebar.expander("📏 Filter Dekat MA", expanded=False):
     filter_dekat_ma20 = st.checkbox("🎯 Close Dekat MA20", value=False)
