@@ -499,9 +499,19 @@ if start_button:
 
                 struktur_harga = evaluate_price_structure(data, period=20)
 
+                # ================= TANGGAL & CHANGE DIVERGENCE =================
+                tanggal_buldiv = "-"
+                change_div = "-"
+                
                 if filter_div and recent["Hybrid_Div_Signal"].any():
                     df_buldiv = recent[recent["Hybrid_Div_Signal"] != ""]
                     matched_signals.extend(list(set(df_buldiv["Hybrid_Div_Signal"])))
+                    
+                    tanggal_buldiv = ", ".join(df_buldiv.index.strftime('%Y-%m-%d').tolist())
+                    
+                    # Hitung persentase kenaikan/penurunan harga dari titik divergence terakhir
+                    last_div_price = df_buldiv["Close"].iloc[-1]
+                    change_div = round(((close - last_div_price) / last_div_price) * 100, 2)
                 
                 if filter_uptrend and is_uptrend: matched_signals.append("📈 UPTREND")
                 if filter_struktur and "Bagus Sekali" in struktur_harga: matched_signals.append("🟢 STRUKTUR HH+HL")
@@ -565,6 +575,8 @@ if start_button:
                         "Sektor": sektor_dict.get(kode, "-"),
                         f"Status Broksum ({periode_broksum})": broksum_result,
                         "Sinyal Terdeteksi": " + ".join(matched_signals),
+                        "Tgl Divergence": tanggal_buldiv,
+                        "Change dr Divergence (%)": change_div,
                         "Struktur Harga (20B vs 20B)": struktur_harga,
                         "Uptrend Status": "✅ Ya" if is_uptrend else "❌ Tidak",
                         "Umur Uptrend (Bar)": umur_uptrend,
