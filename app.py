@@ -288,12 +288,13 @@ with st.sidebar.expander("🌅 Screener Khusus Pre-Market", expanded=False):
     filter_premarket = st.checkbox("Setup EOD (MA, Vol, MACD, PA)", value=False)
     st.caption("Skenario ideal disiapkan sore/malam hari: \n1. Vol Spike >1.5x\n2. Momentum (MACD GC / RSI > 50)\n3. Close kuat (High/Marubozu)\n4. Rebound MA penting.")
 
-with st.sidebar.expander("🎯 Sinyal Utama (Divergence & MACD)", expanded=True):
+with st.sidebar.expander("🔥 Sinyal Divergence", expanded=True):
     filter_div = st.checkbox("🔥 Hybrid Bullish Divergence", value=True)
+
+with st.sidebar.expander("📈 MACD, RSI & Stochastic RSI", expanded=False):
     filter_early_gc = st.checkbox("⚡ MACD Early GC (8,21,5)", value=False)
     filter_gc = st.checkbox("✅ MACD Fase GC (8,21,5)", value=False)
-
-with st.sidebar.expander("📈 RSI & Stochastic RSI", expanded=False):
+    st.markdown("---")
     filter_rsi_gc = st.checkbox("📈 RSI Golden Cross (vs SMA 14)", value=False)
     filter_rsi_oversold = st.checkbox("↳ Wajib GC di Oversold (RSI < 30)", value=False)
     st.markdown("---")
