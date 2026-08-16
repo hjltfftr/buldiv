@@ -656,6 +656,192 @@ def get_volume_status(df, length, mult, max_range=15.0, sma_vol_len=20):
     else: return "NO POLA"
 
 # =========================================
+# 🧬 FUNGSI ANALISIS KUALITAS SETUP LANJUTAN
+# (VCP, Stage Analysis, Relative Strength vs IHSG, Vol Breakout, Spring, Invalidasi)
+# =========================================
+def detect_vcp_contraction(data, lookback=90, pivot_window=3):
+    """Volatility Contraction Pattern (ala Minervini): apakah pullback dalam fase
+    konsolidasi makin dangkal & volume-nya makin kecil dibanding pullback sebelumnya."""
+    sub = data.tail(lookback).reset_index(drop=True)
+    n = len(sub)
+    if n < 20:
+        return {"score": 0, "label": "🔍 Data Kurang", "n_pullback": 0}
+
+    highs, lows, vols = sub['High'].values, sub['Low'].values, sub['Volume'].values
+    pivots = []
+    for i in range(pivot_window, n - pivot_window):
+        w_h = highs[i - pivot_window: i + pivot_window + 1]
+        w_l = lows[i - pivot_window: i + pivot_window + 1]
+        if highs[i] == w_h.max():
+            pivots.append((i, 'H', highs[i]))
+        if lows[i] == w_l.min():
+            pivots.append((i, 'L', lows[i]))
+    pivots.sort(key=lambda x: x[0])
+
+    # Reduksi jadi urutan H-L-H-L berselang-seling, ambil yang paling ekstrem
+    # kalau ada beberapa pivot dengan tipe sama berurutan
+    seq = []
+    for p in pivots:
+        if seq and seq[-1][1] == p[1]:
+            if (p[1] == 'H' and p[2] > seq[-1][2]) or (p[1] == 'L' and p[2] < seq[-1][2]):
+                seq[-1] = p
+        else:
+            seq.append(p)
+
+    pullbacks = []
+    for j in range(len(seq) - 1):
+        if seq[j][1] == 'H' and seq[j + 1][1] == 'L':
+            h_idx, h_price = seq[j][0], seq[j][2]
+            l_idx, l_price = seq[j + 1][0], seq[j + 1][2]
+            if h_price <= 0:
+                continue
+            pct = (h_price - l_price) / h_price * 100
+            avg_vol = vols[h_idx:l_idx + 1].mean() if l_idx > h_idx else vols[h_idx]
+            pullbacks.append({"pct": pct, "vol": avg_vol})
+
+    if len(pullbacks) < 2:
+        return {"score": 0, "label": "🔍 Kontraksi Blm Terbentuk", "n_pullback": len(pullbacks)}
+
+    recent_pb = pullbacks[-4:]
+    pairs = len(recent_pb) - 1
+    price_shrink = sum(1 for i in range(1, len(recent_pb)) if recent_pb[i]['pct'] < recent_pb[i - 1]['pct'])
+    vol_shrink = sum(1 for i in range(1, len(recent_pb)) if recent_pb[i]['vol'] < recent_pb[i - 1]['vol'])
+
+    score = round(((price_shrink / pairs) * 0.6 + (vol_shrink / pairs) * 0.4) * 100, 1)
+    if score >= 70:
+        label = f"✅ VCP Kuat ({len(recent_pb)}x pullback mengecil)"
+    elif score >= 40:
+        label = f"🟡 VCP Sedang ({len(recent_pb)}x pullback)"
+    else:
+        label = f"❌ Blm Kontraksi ({len(recent_pb)}x pullback)"
+    return {"score": score, "label": label, "n_pullback": len(recent_pb)}
+
+
+def get_market_stage(data, slope_lookback=20, cycle_lookback=120):
+    """Posisi dalam siklus besar berdasar slope MA200 (Stage Analysis ala Weinstein).
+    Dipakai sebagai MULTIPLIER ke skor akhir (bukan cuma poin tambahan), karena rapat
+    MA yang identik bisa berarti akumulasi (Stage 1->2) atau distribusi (Stage 3)
+    tergantung fase siklusnya -- konteksnya yang menentukan valid tidaknya sinyal lain."""
+    ma200 = data['MA200']
+    if len(data) < slope_lookback + 1 or pd.isna(ma200.iloc[-1]) or pd.isna(ma200.iloc[-slope_lookback - 1]):
+        return "Data Kurang", 1.0
+
+    slope_pct = (ma200.iloc[-1] - ma200.iloc[-slope_lookback - 1]) / ma200.iloc[-slope_lookback - 1] * 100
+    change_long = 0.0
+    if len(data) >= cycle_lookback + 1:
+        base = data['Close'].iloc[-cycle_lookback - 1]
+        if base > 0:
+            change_long = (data['Close'].iloc[-1] - base) / base * 100
+
+    if slope_pct > 1.0:
+        return "🟢 Stage 2 (Uptrend, MA200 naik)", 1.0
+    elif slope_pct >= -0.5:
+        if change_long < -10:
+            return "🔵 Stage 1 (Basing, transisi dr downtrend)", 0.95
+        elif change_long > 25:
+            return "🟠 Stage 3 (Topping, waspada distribusi)", 0.5
+        else:
+            return "⚪ Sideways Netral", 0.8
+    else:
+        return "🔴 Stage 4 (Downtrend, MA200 turun)", 0.3
+
+
+def get_relative_strength_vs_ihsg(stock_data, ihsg_data, period=20):
+    """Bandingkan kekuatan saham vs IHSG selama periode konsolidasi -- apakah saham
+    tetap kuat / bikin higher-low duluan saat IHSG lemah (tanda demand tersembunyi)."""
+    if ihsg_data is None or len(ihsg_data) < period + 1 or len(stock_data) < period + 1:
+        return "N/A (IHSG data kosong)", 50
+
+    stock_struktur = evaluate_price_structure(stock_data, period)
+    ihsg_struktur = evaluate_price_structure(ihsg_data, period)
+
+    stock_chg = (stock_data['Close'].iloc[-1] - stock_data['Close'].iloc[-period]) / stock_data['Close'].iloc[-period] * 100
+    ihsg_chg = (ihsg_data['Close'].iloc[-1] - ihsg_data['Close'].iloc[-period]) / ihsg_data['Close'].iloc[-period] * 100
+    outperform = round(stock_chg - ihsg_chg, 2)
+
+    ihsg_lemah = ("Rusak" in ihsg_struktur) or ("Volatil" in ihsg_struktur)
+    saham_kuat = ("Bagus" in stock_struktur) or ("Konsolidasi" in stock_struktur)
+
+    if ihsg_lemah and saham_kuat:
+        return f"💪 Kuat saat IHSG Lemah ({outperform:+.1f}%)", 100
+    elif outperform > 0:
+        return f"📈 Outperform IHSG ({outperform:+.1f}%)", 75
+    elif outperform > -3:
+        return f"➖ Sejalan IHSG ({outperform:+.1f}%)", 50
+    else:
+        return f"📉 Underperform IHSG ({outperform:+.1f}%)", 25
+
+
+def detect_shakeout_spring(data, lookback=30, recent_bars=3, undercut_pct=0.3):
+    """Wyckoff Spring: harga sempat tembus sedikit di bawah support lalu cepat balik naik
+    (jebakan shakeout pemegang lemah) -- sering jadi titik entry paling matang."""
+    if len(data) < lookback + recent_bars:
+        return "-", 0
+    sub = data.tail(lookback + recent_bars)
+    support = sub['Low'].iloc[:-recent_bars].min()
+    last_bars = sub.tail(recent_bars)
+    undercut = (last_bars['Low'] < support * (1 - undercut_pct / 100)).any()
+    reclaim = last_bars['Close'].iloc[-1] > support
+    if undercut and reclaim:
+        return "🎯 Spring Terdeteksi (shakeout & reclaim)", 100
+    return "-", 0
+
+
+def check_breakout_volume(data, lookback=10, resistance_window=20, vol_mult_threshold=1.5):
+    """Kalau sudah breakout dari konsolidasi, cek apakah disertai lonjakan volume
+    (idealnya >=1.5-2x rata-rata) atau berpotensi fakeout."""
+    if len(data) < lookback + resistance_window + 5:
+        return "Data Kurang", None
+    resistance = data['High'].iloc[-(lookback + resistance_window):-lookback].max()
+    recent = data.tail(lookback)
+    breakout_mask = recent['Close'] > resistance
+    if not breakout_mask.any():
+        return "Belum Breakout", None
+    breakout_idx = recent.index[breakout_mask][0]
+    breakout_vol = data.loc[breakout_idx, 'Volume']
+    avg_vol = data.loc[breakout_idx, 'Vol_MA20'] if 'Vol_MA20' in data.columns else np.nan
+    if pd.isna(avg_vol) or avg_vol == 0:
+        return "Breakout (Vol N/A)", 50
+    ratio = breakout_vol / avg_vol
+    if ratio >= vol_mult_threshold:
+        return f"✅ Breakout Vol {ratio:.1f}x (Kuat)", 100
+    else:
+        return f"⚠️ Breakout Vol {ratio:.1f}x (Rawan Fakeout)", 30
+
+
+def get_invalidation_level(data, lookback=30):
+    """Level harga di mana setup dianggap batal (low konsolidasi terdekat) -- kesiapan
+    entry secara praktis, bukan identifikasi pola."""
+    if len(data) < lookback:
+        return None
+    return round(float(data['Low'].tail(lookback).min()), 2)
+
+
+def calc_setup_score(vcp_score, rs_score, vol_dry_status, shakeout_score, bandar_status, breakout_score, stage_mult):
+    """Gabungkan semua komponen jadi 1 skor 0-100. Stage Analysis dipakai sebagai
+    MULTIPLIER (bukan additive) di akhir -- lihat alasannya di get_market_stage()."""
+    vol_dry_map = {"AKUMULASI": 100, "ASCENSION": 90, "NO POLA": 50, "DISTRIBUSI": 10, "MARKDOWN": 0, "-": 50}
+    vol_dry_score = vol_dry_map.get(vol_dry_status, 50)
+
+    bandar_score = 50
+    if isinstance(bandar_status, str):
+        if "AKUMULASI" in bandar_status: bandar_score = 100
+        elif "DISTRIBUSI" in bandar_status: bandar_score = 10
+        elif "NETRAL" in bandar_status: bandar_score = 50
+
+    breakout_component = breakout_score if breakout_score is not None else 50  # netral kalau belum breakout
+
+    raw = (
+        vcp_score * 0.25 +
+        rs_score * 0.20 +
+        vol_dry_score * 0.15 +
+        shakeout_score * 0.10 +
+        bandar_score * 0.15 +
+        breakout_component * 0.15
+    )
+    return round(min(100, max(0, raw * stage_mult)), 1)
+
+# =========================================
 # UI STREAMLIT
 # =========================================
 st.set_page_config(page_title="IHSG Screener by LTF", page_icon="📊", layout="wide", initial_sidebar_state="expanded")
@@ -887,6 +1073,15 @@ with st.sidebar.expander("🕵️‍♂️ Fitur Bandarmologi", expanded=False):
         if PROXY_LIST:
             st.success(f"✅ Proxy Aktif ({len(PROXY_LIST)} IPs)")
 
+with st.sidebar.expander("🧬 Analisis Kualitas Setup Lanjutan", expanded=False):
+    cek_kualitas_setup = st.checkbox("🧬 Hitung VCP, Stage, RS vs IHSG, Vol Breakout, Spring & Invalidasi", value=False)
+    st.caption(
+        "Menambahkan kolom analisis + Skor Setup gabungan (0-100) di tabel hasil — "
+        "TIDAK jadi filter wajib. Cukup aktifkan filter seperti biasa (mis. 'MA Rapat Up'/'MA Melilit'), "
+        "lalu tabel hasil otomatis diurutkan dari skor tertinggi ke terendah."
+    )
+    st.caption("⚠️ *Menambah waktu proses karena mengunduh data IHSG & analisis pivot per saham.*")
+
 with st.sidebar.expander("🌅 Screener Khusus Pre-Market", expanded=False):
     filter_premarket = st.checkbox("Setup EOD (MA, Vol, MACD, PA)", value=False)
     st.caption("Skenario ideal disiapkan sore/malam hari: \n1. Vol Spike >1.5x\n2. Momentum (MACD GC / RSI > 50)\n3. Close kuat (High/Marubozu)\n4. Rebound MA penting.")
@@ -1073,6 +1268,27 @@ if start_button:
             status.update(label=f"Gagal mengambil data Yahoo Finance: {e}", state="error")
             st.stop()
 
+        # Data IHSG (dibutuhkan untuk hitung Kekuatan Relatif vs IHSG)
+        ihsg_full_data = None
+        if cek_kualitas_setup:
+            st.write("Mengunduh data IHSG untuk perbandingan kekuatan relatif...")
+            try:
+                ihsg_full_data = yf.download(
+                    tickers="^JKSE",
+                    start=start_yf.strftime('%Y-%m-%d'),
+                    end=end_yf.strftime('%Y-%m-%d'),
+                    interval=data_interval,
+                    auto_adjust=False,
+                    progress=False,
+                )
+                if resample_freq and not ihsg_full_data.empty:
+                    ihsg_full_data.index = pd.to_datetime(ihsg_full_data.index)
+                    ihsg_full_data = ihsg_full_data.resample(resample_freq, offset="9h").agg(
+                        {'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}
+                    ).dropna()
+            except Exception:
+                ihsg_full_data = None
+
         st.write("Memproses indikator dan sinyal tiap emiten...")
         progress_bar = st.progress(0)
 
@@ -1226,6 +1442,29 @@ if start_button:
 
                 struktur_harga = evaluate_price_structure(data, period=20)
 
+                # ================= ANALISIS KUALITAS SETUP LANJUTAN =================
+                vcp_score_val, vcp_label = 0, "-"
+                stage_label, stage_mult = "-", 1.0
+                rs_label, rs_score_val = "-", 50
+                shakeout_label, shakeout_score_val = "-", 0
+                breakout_label, breakout_score_val = "-", None
+                invalidasi_level = "-"
+
+                if cek_kualitas_setup:
+                    vcp_result = detect_vcp_contraction(data)
+                    vcp_score_val, vcp_label = vcp_result["score"], vcp_result["label"]
+
+                    stage_label, stage_mult = get_market_stage(data)
+
+                    rs_label, rs_score_val = get_relative_strength_vs_ihsg(data, ihsg_full_data, period=20)
+
+                    shakeout_label, shakeout_score_val = detect_shakeout_spring(data)
+
+                    breakout_label, breakout_score_val = check_breakout_volume(data)
+
+                    inv_level = get_invalidation_level(data)
+                    invalidasi_level = inv_level if inv_level is not None else "-"
+
                 # ================= TANGGAL & CHANGE DIVERGENCE MACD (FIXED) =================
                 tanggal_buldiv = "-"
                 change_div = "-"
@@ -1354,6 +1593,18 @@ if start_button:
                         time.sleep(0.5)
                         broksum_result = get_broksum_status(ticker_plain, start_str, end_str)
 
+                    setup_score_val = "-"
+                    if cek_kualitas_setup:
+                        setup_score_val = calc_setup_score(
+                            vcp_score=vcp_score_val,
+                            rs_score=rs_score_val,
+                            vol_dry_status=stat_vol_5,
+                            shakeout_score=shakeout_score_val,
+                            bandar_status=broksum_result,
+                            breakout_score=breakout_score_val,
+                            stage_mult=stage_mult,
+                        )
+
                     hasil.append({
                         "Saham": ticker_plain,
                         "Sektor": sektor_dict.get(kode, "-"),
@@ -1374,6 +1625,13 @@ if start_button:
                         "Change dr Bottom 60B (%)": round(change_from_bottom, 2),
                         "Candle Terakhir": last_candle_type,
                         "Vol 5 Bar (Mode)": stat_vol_5,
+                        "VCP (Kontraksi)": vcp_label,
+                        "Stage Market (MA200)": stage_label,
+                        "RS vs IHSG": rs_label,
+                        "Shakeout/Spring": shakeout_label,
+                        "Vol Konfirmasi Breakout": breakout_label,
+                        "Level Invalidasi": invalidasi_level,
+                        "Skor Setup (0-100)": setup_score_val,
                         "Close": close,
                         "MA20": round(ma20_now, 2) if not pd.isna(ma20_now) else "-",
                         "S.State": s_state,
@@ -1390,12 +1648,16 @@ if start_button:
     # otomatis men-trigger rerun script dari atas oleh Streamlit).
     df_hasil = pd.DataFrame(hasil)
     if not df_hasil.empty:
-        df_hasil = df_hasil.sort_values(by="Saham").reset_index(drop=True)
+        if cek_kualitas_setup and "Skor Setup (0-100)" in df_hasil.columns:
+            df_hasil = df_hasil.sort_values(by="Skor Setup (0-100)", ascending=False).reset_index(drop=True)
+        else:
+            df_hasil = df_hasil.sort_values(by="Saham").reset_index(drop=True)
 
     st.session_state.df_hasil = df_hasil
     st.session_state.screening_meta = {
         "target_date": target_date,
         "tf_choice": tf_choice,
+        "cek_kualitas_setup": cek_kualitas_setup,
     }
 
 # =========================================
@@ -1431,4 +1693,3 @@ if st.session_state.df_hasil is not None:
             )
     else:
         st.warning(f"😔 Tidak ada saham yang memenuhi kriteria pada timeframe {disp_tf} untuk tanggal {disp_date.strftime('%d %b %Y')}.")
-
