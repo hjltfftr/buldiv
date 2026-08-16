@@ -1073,15 +1073,6 @@ with st.sidebar.expander("🕵️‍♂️ Fitur Bandarmologi", expanded=False):
         if PROXY_LIST:
             st.success(f"✅ Proxy Aktif ({len(PROXY_LIST)} IPs)")
 
-with st.sidebar.expander("🧬 Analisis Kualitas Setup Lanjutan", expanded=False):
-    cek_kualitas_setup = st.checkbox("🧬 Hitung VCP, Stage, RS vs IHSG, Vol Breakout, Spring & Invalidasi", value=False)
-    st.caption(
-        "Menambahkan kolom analisis + Skor Setup gabungan (0-100) di tabel hasil — "
-        "TIDAK jadi filter wajib. Cukup aktifkan filter seperti biasa (mis. 'MA Rapat Up'/'MA Melilit'), "
-        "lalu tabel hasil otomatis diurutkan dari skor tertinggi ke terendah."
-    )
-    st.caption("⚠️ *Menambah waktu proses karena mengunduh data IHSG & analisis pivot per saham.*")
-
 with st.sidebar.expander("🌅 Screener Khusus Pre-Market", expanded=False):
     filter_premarket = st.checkbox("Setup EOD (MA, Vol, MACD, PA)", value=False)
     st.caption("Skenario ideal disiapkan sore/malam hari: \n1. Vol Spike >1.5x\n2. Momentum (MACD GC / RSI > 50)\n3. Close kuat (High/Marubozu)\n4. Rebound MA penting.")
@@ -1141,6 +1132,16 @@ with st.sidebar.expander("🎯 Indikator Tren & Struktur Harga", expanded=False)
 with st.sidebar.expander("🌪️ MA Rapat & Melilit", expanded=False):
     filter_melilit = st.checkbox("🌪️ MA Melilit (Bertumpuk)", value=False)
     filter_rapat_up = st.checkbox("📏 MA Rapat Up", value=False)
+    st.markdown("---")
+    cek_kualitas_setup = st.checkbox(
+        "🧬 Rangking Kualitas Setup (VCP, Stage, RS vs IHSG, Vol Breakout, Spring, Invalidasi)",
+        value=False,
+    )
+    if cek_kualitas_setup:
+        st.caption(
+            "Menambahkan kolom analisis + Skor Setup (0-100) khusus untuk saham yang lolos "
+            "filter MA Melilit/Rapat Up di atas, lalu tabel hasil di-ranking dari skor tertinggi."
+        )
 
 with st.sidebar.expander("📏 Filter Dekat MA", expanded=False):
     filter_dekat_ma20 = st.checkbox("🎯 Close Dekat MA20", value=False)
