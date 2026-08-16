@@ -167,6 +167,7 @@ def check_hybrid_bullish_divergence(
     sync_tolerance=3,
     use_vol_filter=False,
     vol_sma_len=20,
+    date_fmt="%Y-%m-%d",
 ):
     if ma50_col not in df.columns:
         df[ma50_col] = df["Close"].rolling(50).mean()
@@ -241,14 +242,14 @@ def check_hybrid_bullish_divergence(
                     macd1_reg_bar = cur_b1
                     signals[i] = "⚡ FAST REG DIV"
                     tags[i] = "FAST"
-                    pivot_dates[i] = dates[cur_b1].strftime('%Y-%m-%d')
+                    pivot_dates[i] = dates[cur_b1].strftime(date_fmt)
                     pivot_close[i] = close_arr[cur_b1]
                 if cur_p1 > prv_p1 and cur_i1 < prv_i1:
                     macd1_hid_ok = True
                     macd1_hid_bar = cur_b1
                     signals[i] = "⚡ FAST HID DIV"
                     tags[i] = "FAST"
-                    pivot_dates[i] = dates[cur_b1].strftime('%Y-%m-%d')
+                    pivot_dates[i] = dates[cur_b1].strftime(date_fmt)
                     pivot_close[i] = close_arr[cur_b1]
             prv_p1, prv_i1, prv_b1 = cur_p1, cur_i1, cur_b1
             cur_p1, cur_i1, cur_b1 = None, None, None
@@ -286,7 +287,7 @@ def check_hybrid_bullish_divergence(
                     else:
                         signals[i] = "🐢 STD REG DIV"
                         tags[i] = "STD"
-                    pivot_dates[i] = dates[cur_b2].strftime('%Y-%m-%d')
+                    pivot_dates[i] = dates[cur_b2].strftime(date_fmt)
                     pivot_close[i] = close_arr[cur_b2]
                 elif is_hid:
                     if hid_synced and vol_ok:
@@ -295,7 +296,7 @@ def check_hybrid_bullish_divergence(
                     else:
                         signals[i] = "🐢 STD HID DIV"
                         tags[i] = "STD"
-                    pivot_dates[i] = dates[cur_b2].strftime('%Y-%m-%d')
+                    pivot_dates[i] = dates[cur_b2].strftime(date_fmt)
                     pivot_close[i] = close_arr[cur_b2]
             prv_p2, prv_i2, prv_b2 = cur_p2, cur_i2, cur_b2
             cur_p2, cur_i2, cur_b2 = None, None, None
@@ -322,6 +323,7 @@ def check_cci_bullish_divergence(
     max_bar_gap=80,
     use_vol_filter=False,
     vol_sma_len=20,
+    date_fmt="%Y-%m-%d",
 ):
     tp = (df["High"] + df["Low"] + df["Close"]) / 3
     sma_tp = tp.rolling(cci_period).mean()
@@ -373,7 +375,7 @@ def check_cci_bullish_divergence(
                     )
                     if vol_ok:
                         signals[i] = "📊 CCI BULL DIV"
-                        pivot_dates[i] = dates[cur_b].strftime('%Y-%m-%d')
+                        pivot_dates[i] = dates[cur_b].strftime(date_fmt)
                         pivot_close[i] = close_arr[cur_b]
             prv_p, prv_c, prv_b = cur_p, cur_c, cur_b
             cur_p, cur_c, cur_b = None, None, None
@@ -403,6 +405,7 @@ def check_hybrid_stochrsi_bullish_divergence(
     sync_tolerance=3,
     use_vol_filter=False,
     vol_sma_len=20,
+    date_fmt="%Y-%m-%d",
 ):
     delta = df["Close"].diff()
     gain = delta.where(delta > 0, 0).ewm(alpha=1 / rsi_period, min_periods=rsi_period, adjust=False).mean()
@@ -472,7 +475,7 @@ def check_hybrid_stochrsi_bullish_divergence(
                     fast_ok, fast_bar = True, cur_b1
                     signals[i] = "〰️ FAST STOCHRSI DIV"
                     tags[i] = "FAST"
-                    pivot_dates[i] = dates[cur_b1].strftime('%Y-%m-%d')
+                    pivot_dates[i] = dates[cur_b1].strftime(date_fmt)
                     pivot_close[i] = close_arr[cur_b1]
             prv_p1, prv_k1, prv_b1 = cur_p1, cur_k1, cur_b1
             cur_p1, cur_k1, cur_b1 = None, None, None
@@ -499,7 +502,7 @@ def check_hybrid_stochrsi_bullish_divergence(
                     else:
                         signals[i] = "🐢 STD STOCHRSI DIV"
                         tags[i] = "STD"
-                    pivot_dates[i] = dates[cur_b2].strftime('%Y-%m-%d')
+                    pivot_dates[i] = dates[cur_b2].strftime(date_fmt)
                     pivot_close[i] = close_arr[cur_b2]
             prv_p2, prv_k2, prv_b2 = cur_p2, cur_k2, cur_b2
             cur_p2, cur_k2, cur_b2 = None, None, None
@@ -535,6 +538,7 @@ def check_big_volume_kill_trend(
     vol_sma_len=20,
     confirm_bars=5,
     min_downtrend_pct=-3.0,
+    date_fmt="%Y-%m-%d",
 ):
     vol_sma = df["Volume"].rolling(vol_sma_len).mean()
 
@@ -582,7 +586,7 @@ def check_big_volume_kill_trend(
 
         if confirm_at is not None:
             signals[confirm_at] = "💥 BIG VOLUME KILL TREND"
-            climax_dates[confirm_at] = dates[i].strftime('%Y-%m-%d')
+            climax_dates[confirm_at] = dates[i].strftime(date_fmt)
             climax_lows[confirm_at] = low_arr[i]
             i = confirm_at + 1  # lompat lewati bar yang sudah dipakai
         else:
@@ -1012,6 +1016,12 @@ tf_map = {
 }
 data_interval, days_back, resample_freq = tf_map[tf_choice]["interval"], tf_map[tf_choice]["days_back"], tf_map[tf_choice]["resample"]
 
+# Timeframe di bawah 1 hari (intraday) -> tampilkan jam juga di tanggal divergence,
+# selain itu (Daily/Weekly/Monthly) cukup tanggal saja.
+INTRADAY_TF_LIST = ["15 Menit", "30 Menit", "1 Jam", "2 Jam", "3 Jam", "4 Jam"]
+is_intraday_tf = tf_choice in INTRADAY_TF_LIST
+pivot_date_fmt = "%Y-%m-%d %H:%M" if is_intraday_tf else "%Y-%m-%d"
+
 # Layout Tombol Eksekusi (Tengah)
 col1, col2, col3 = st.columns([1, 2, 1])
 with col2:
@@ -1105,6 +1115,7 @@ if start_button:
                     max_bar_gap=DIV_MAX_GAP,
                     sync_tolerance=div_sync_tolerance,
                     use_vol_filter=div_use_vol_filter,
+                    date_fmt=pivot_date_fmt,
                 )
 
                 # Panggil fungsi CCI Bullish Divergence (parameter dari sidebar)
@@ -1115,6 +1126,7 @@ if start_button:
                     min_bar_gap=DIV_MIN_GAP,
                     max_bar_gap=DIV_MAX_GAP,
                     use_vol_filter=cci_use_vol_filter,
+                    date_fmt=pivot_date_fmt,
                 )
 
                 # Panggil fungsi Hybrid Stoch RSI Bullish Divergence (parameter dari sidebar)
@@ -1125,6 +1137,7 @@ if start_button:
                     max_bar_gap=DIV_MAX_GAP,
                     sync_tolerance=stochrsi_sync_tolerance,
                     use_vol_filter=stochrsi_use_vol_filter,
+                    date_fmt=pivot_date_fmt,
                 )
 
                 # Panggil fungsi Big Volume Kill Trend (parameter dari sidebar)
@@ -1134,6 +1147,7 @@ if start_button:
                     vol_mult=kt_vol_mult,
                     confirm_bars=kt_confirm_bars,
                     min_downtrend_pct=kt_min_downtrend_pct,
+                    date_fmt=pivot_date_fmt,
                 )
 
                 delta = close_series.diff()
