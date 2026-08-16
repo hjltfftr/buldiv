@@ -1142,6 +1142,11 @@ with st.sidebar.expander("🌪️ MA Rapat & Melilit", expanded=False):
             "Menambahkan kolom analisis + Skor Setup (0-100) khusus untuk saham yang lolos "
             "filter MA Melilit/Rapat Up di atas, lalu tabel hasil di-ranking dari skor tertinggi."
         )
+        if not (filter_melilit or filter_rapat_up):
+            st.warning(
+                "⚠️ Checkbox ini bukan filter sendiri — dia cuma nambahin kolom analisis. "
+                "Centang juga 'MA Melilit' atau 'MA Rapat Up' di atas, kalau tidak tabel hasil akan kosong."
+            )
 
 with st.sidebar.expander("📏 Filter Dekat MA", expanded=False):
     filter_dekat_ma20 = st.checkbox("🎯 Close Dekat MA20", value=False)
@@ -1452,19 +1457,30 @@ if start_button:
                 invalidasi_level = "-"
 
                 if cek_kualitas_setup:
-                    vcp_result = detect_vcp_contraction(data)
-                    vcp_score_val, vcp_label = vcp_result["score"], vcp_result["label"]
+                    try:
+                        vcp_result = detect_vcp_contraction(data)
+                        vcp_score_val, vcp_label = vcp_result["score"], vcp_result["label"]
 
-                    stage_label, stage_mult = get_market_stage(data)
+                        stage_label, stage_mult = get_market_stage(data)
 
-                    rs_label, rs_score_val = get_relative_strength_vs_ihsg(data, ihsg_full_data, period=20)
+                        rs_label, rs_score_val = get_relative_strength_vs_ihsg(data, ihsg_full_data, period=20)
 
-                    shakeout_label, shakeout_score_val = detect_shakeout_spring(data)
+                        shakeout_label, shakeout_score_val = detect_shakeout_spring(data)
 
-                    breakout_label, breakout_score_val = check_breakout_volume(data)
+                        breakout_label, breakout_score_val = check_breakout_volume(data)
 
-                    inv_level = get_invalidation_level(data)
-                    invalidasi_level = inv_level if inv_level is not None else "-"
+                        inv_level = get_invalidation_level(data)
+                        invalidasi_level = inv_level if inv_level is not None else "-"
+                    except Exception:
+                        # Kalau ada error di analisis kualitas setup (mis. data IHSG
+                        # bermasalah), JANGAN sampai gugurkan seluruh baris saham ini --
+                        # cukup tandai kolom kualitasnya "Error", sinyal utama tetap jalan.
+                        vcp_score_val, vcp_label = 0, "⚠️ Error"
+                        stage_label, stage_mult = "⚠️ Error", 1.0
+                        rs_label, rs_score_val = "⚠️ Error", 50
+                        shakeout_label, shakeout_score_val = "⚠️ Error", 0
+                        breakout_label, breakout_score_val = "⚠️ Error", None
+                        invalidasi_level = "-"
 
                 # ================= TANGGAL & CHANGE DIVERGENCE MACD (FIXED) =================
                 tanggal_buldiv = "-"
@@ -1594,17 +1610,20 @@ if start_button:
                         time.sleep(0.5)
                         broksum_result = get_broksum_status(ticker_plain, start_str, end_str)
 
-                    setup_score_val = "-"
+                    setup_score_val = np.nan
                     if cek_kualitas_setup:
-                        setup_score_val = calc_setup_score(
-                            vcp_score=vcp_score_val,
-                            rs_score=rs_score_val,
-                            vol_dry_status=stat_vol_5,
-                            shakeout_score=shakeout_score_val,
-                            bandar_status=broksum_result,
-                            breakout_score=breakout_score_val,
-                            stage_mult=stage_mult,
-                        )
+                        try:
+                            setup_score_val = calc_setup_score(
+                                vcp_score=vcp_score_val,
+                                rs_score=rs_score_val,
+                                vol_dry_status=stat_vol_5,
+                                shakeout_score=shakeout_score_val,
+                                bandar_status=broksum_result,
+                                breakout_score=breakout_score_val,
+                                stage_mult=stage_mult,
+                            )
+                        except Exception:
+                            setup_score_val = np.nan
 
                     hasil.append({
                         "Saham": ticker_plain,
