@@ -891,7 +891,7 @@ with st.sidebar.expander("🌅 Screener Khusus Pre-Market", expanded=False):
     filter_premarket = st.checkbox("Setup EOD (MA, Vol, MACD, PA)", value=False)
     st.caption("Skenario ideal disiapkan sore/malam hari: \n1. Vol Spike >1.5x\n2. Momentum (MACD GC / RSI > 50)\n3. Close kuat (High/Marubozu)\n4. Rebound MA penting.")
 
-with st.sidebar.expander("🔥 Sinyal Divergence", expanded=True):
+with st.sidebar.expander("🔥 Sinyal Divergence", expanded=False):
     filter_div = st.checkbox("🔥 Hybrid Bullish Divergence (MACD Fast 8,21,5 + Std 12,26,9)", value=False)
     div_use_trend_filter = st.checkbox("↳ Filter Tren (Regular Div hanya valid saat Close < MA50)", value=False)
     div_sync_tolerance = st.slider("↳ Toleransi Sinkronisasi Pivot utk label STRONG (bar):", 0, 10, 3)
