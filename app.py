@@ -659,6 +659,7 @@ st.set_page_config(page_title="Multi-Signal Screener", page_icon="📈", layout=
 # Judul Utama
 st.markdown("<h1 style='text-align: center; color: #1E88E5;'>📊 Multi-Signal Screener</h1>", unsafe_allow_html=True)
 st.markdown("<h4 style='text-align: center; color: gray;'>Hybrid Divergence, Moving Average & Bandarmologi (IDX)</h4>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; color: gray; font-size: 13px;'>🙏 Thanks to kak gitaketawa aka anak gawang aka mahaguru karyawan IHSG</p>", unsafe_allow_html=True)
 st.divider()
 
 # Sidebar Configuration
@@ -695,10 +696,8 @@ with st.sidebar.expander("🌅 Screener Khusus Pre-Market", expanded=False):
     st.caption("Skenario ideal disiapkan sore/malam hari: \n1. Vol Spike >1.5x\n2. Momentum (MACD GC / RSI > 50)\n3. Close kuat (High/Marubozu)\n4. Rebound MA penting.")
 
 with st.sidebar.expander("🔥 Sinyal Divergence", expanded=True):
-    filter_div = st.checkbox("🔥 Hybrid Bullish Divergence", value=True)
-    st.caption("Parameter di bawah menyamakan logic dengan versi Pine Script (trend filter, gap swing, sync tolerance, volume filter).")
+    filter_div = st.checkbox("🔥 Hybrid Bullish Divergence (MACD Fast 8,21,5 + Std 12,26,9)", value=True)
     div_use_trend_filter = st.checkbox("↳ Filter Tren (Regular Div hanya valid saat Close < MA50)", value=True)
-    div_min_gap, div_max_gap = st.slider("↳ Jarak Antar Swing (bar), Min - Maks:", 1, 150, (5, 80))
     div_sync_tolerance = st.slider("↳ Toleransi Sinkronisasi Pivot utk label STRONG (bar):", 0, 10, 3)
     div_use_vol_filter = st.checkbox("↳ Wajib Volume di Atas Rata-rata (SMA20) saat STRONG", value=False)
 
@@ -706,16 +705,19 @@ with st.sidebar.expander("🔥 Sinyal Divergence", expanded=True):
     filter_cci_div = st.checkbox("📊 CCI Bullish Divergence", value=False)
     cci_period = st.slider("↳ Periode CCI:", 10, 50, 20)
     cci_oversold = st.slider("↳ Level Oversold CCI:", -200, -50, -100, 10)
-    cci_min_gap, cci_max_gap = st.slider("↳ Jarak Antar Swing CCI (bar), Min - Maks:", 1, 150, (5, 80))
     cci_use_vol_filter = st.checkbox("↳ Wajib Volume di Atas Rata-rata (SMA20) saat Pivot CCI", value=False)
 
     st.markdown("---")
     filter_stochrsi_div = st.checkbox("〰️ Hybrid Stoch RSI Bullish Divergence (Fast 5,3,3 + Std 14,3,3)", value=False)
-    st.caption("Sama seperti Hybrid MACD Divergence, tapi oscillator-nya Stoch RSI: pivot cepat pakai 5,3,3 dan pivot standar pakai 14,3,3.")
     stochrsi_oversold = st.slider("↳ Level Oversold Stoch RSI:", 5, 50, 20)
-    stochrsi_min_gap, stochrsi_max_gap = st.slider("↳ Jarak Antar Swing Stoch RSI (bar), Min - Maks:", 1, 150, (5, 80))
     stochrsi_sync_tolerance = st.slider("↳ Toleransi Sinkronisasi Pivot utk label STRONG (bar):", 0, 10, 3, key="stochrsi_sync")
     stochrsi_use_vol_filter = st.checkbox("↳ Wajib Volume di Atas Rata-rata (SMA20) saat STRONG", value=False, key="stochrsi_vol")
+
+    st.markdown("---")
+    st.caption("📏 Jarak antar swing untuk semua bullish divergence (MACD, CCI, Stoch RSI) tetap: minimal 5 bar, maksimal 100 bar.")
+
+# Jarak antar swing dikunci sama untuk semua scanner bullish divergence
+DIV_MIN_GAP, DIV_MAX_GAP = 5, 100
 
 with st.sidebar.expander("💥 Big Volume Kill Trend", expanded=False):
     filter_killtrend = st.checkbox("💥 Big Volume Kill Trend (Downtrend → Reversal)", value=False)
@@ -865,8 +867,8 @@ if start_button:
                     data,
                     ma50_col="MA50",
                     use_trend_filter=div_use_trend_filter,
-                    min_bar_gap=div_min_gap,
-                    max_bar_gap=div_max_gap,
+                    min_bar_gap=DIV_MIN_GAP,
+                    max_bar_gap=DIV_MAX_GAP,
                     sync_tolerance=div_sync_tolerance,
                     use_vol_filter=div_use_vol_filter,
                 )
@@ -876,8 +878,8 @@ if start_button:
                     data,
                     cci_period=cci_period,
                     oversold_level=cci_oversold,
-                    min_bar_gap=cci_min_gap,
-                    max_bar_gap=cci_max_gap,
+                    min_bar_gap=DIV_MIN_GAP,
+                    max_bar_gap=DIV_MAX_GAP,
                     use_vol_filter=cci_use_vol_filter,
                 )
 
@@ -885,8 +887,8 @@ if start_button:
                 data = check_hybrid_stochrsi_bullish_divergence(
                     data,
                     oversold_level=stochrsi_oversold,
-                    min_bar_gap=stochrsi_min_gap,
-                    max_bar_gap=stochrsi_max_gap,
+                    min_bar_gap=DIV_MIN_GAP,
+                    max_bar_gap=DIV_MAX_GAP,
                     sync_tolerance=stochrsi_sync_tolerance,
                     use_vol_filter=stochrsi_use_vol_filter,
                 )
@@ -972,7 +974,7 @@ if start_button:
 
                 struktur_harga = evaluate_price_structure(data, period=20)
 
-                # ================= TANGGAL & CHANGE DIVERGENCE (FIXED) =================
+                # ================= TANGGAL & CHANGE DIVERGENCE MACD (FIXED) =================
                 tanggal_buldiv = "-"
                 change_div = "-"
 
@@ -982,13 +984,19 @@ if start_button:
 
                     # Tanggal sekarang diambil dari PivotDate (tanggal swing low aktual),
                     # bukan dari df_buldiv.index (yang merupakan tanggal bar konfirmasi).
-                    tanggal_buldiv = ", ".join([d for d in df_buldiv["Hybrid_Div_PivotDate"].tolist() if d])
+                    # Setiap tanggal disertai tag jenisnya (FAST/STD/STRONG) biar jelas
+                    # itu change dari div MACD tipe apa.
+                    tanggal_buldiv = ", ".join([
+                        f"{d} ({t})" for d, t in zip(df_buldiv["Hybrid_Div_PivotDate"], df_buldiv["Hybrid_Div_Tag"]) if d
+                    ])
 
                     # Change % dihitung dari Close di titik pivot (swing low) yang benar,
                     # bukan dari Close di bar konfirmasi seperti versi lama.
                     last_div_price = df_buldiv["Hybrid_Div_PivotClose"].iloc[-1]
+                    last_div_tag = df_buldiv["Hybrid_Div_Tag"].iloc[-1]
                     if pd.notna(last_div_price) and last_div_price != 0:
-                        change_div = round(((close - last_div_price) / last_div_price) * 100, 2)
+                        change_val = round(((close - last_div_price) / last_div_price) * 100, 2)
+                        change_div = f"{change_val}% ({last_div_tag})"
 
                 # ================= TANGGAL & CHANGE CCI DIVERGENCE =================
                 tanggal_ccidiv = "-"
@@ -1012,11 +1020,16 @@ if start_button:
                     df_stochrsi = recent[recent["StochRSI_Div_Signal"] != ""]
                     matched_signals.extend(list(set(df_stochrsi["StochRSI_Div_Signal"])))
 
-                    tanggal_stochrsidiv = ", ".join([d for d in df_stochrsi["StochRSI_Div_PivotDate"].tolist() if d])
+                    # Setiap tanggal disertai tag jenisnya (FAST/STD/STRONG)
+                    tanggal_stochrsidiv = ", ".join([
+                        f"{d} ({t})" for d, t in zip(df_stochrsi["StochRSI_Div_PivotDate"], df_stochrsi["StochRSI_Div_Tag"]) if d
+                    ])
 
                     last_stochrsi_price = df_stochrsi["StochRSI_Div_PivotClose"].iloc[-1]
+                    last_stochrsi_tag = df_stochrsi["StochRSI_Div_Tag"].iloc[-1]
                     if pd.notna(last_stochrsi_price) and last_stochrsi_price != 0:
-                        change_stochrsidiv = round(((close - last_stochrsi_price) / last_stochrsi_price) * 100, 2)
+                        change_val_sr = round(((close - last_stochrsi_price) / last_stochrsi_price) * 100, 2)
+                        change_stochrsidiv = f"{change_val_sr}% ({last_stochrsi_tag})"
 
                 # ================= TANGGAL & CHANGE BIG VOLUME KILL TREND =================
                 tanggal_killtrend = "-"
@@ -1094,8 +1107,8 @@ if start_button:
                         "Sektor": sektor_dict.get(kode, "-"),
                         f"Status Broksum ({periode_broksum})": broksum_result,
                         "Sinyal Terdeteksi": " + ".join(matched_signals),
-                        "Tgl Divergence": tanggal_buldiv,
-                        "Change dr Divergence (%)": change_div,
+                        "Tgl Div MACD": tanggal_buldiv,
+                        "Change dr Div MACD (%)": change_div,
                         "Tgl CCI Div": tanggal_ccidiv,
                         "Change dr CCI Div (%)": change_ccidiv,
                         "Tgl StochRSI Div": tanggal_stochrsidiv,
