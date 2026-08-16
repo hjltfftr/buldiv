@@ -1431,3 +1431,4 @@ if st.session_state.df_hasil is not None:
             )
     else:
         st.warning(f"😔 Tidak ada saham yang memenuhi kriteria pada timeframe {disp_tf} untuk tanggal {disp_date.strftime('%d %b %Y')}.")
+
