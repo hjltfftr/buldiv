@@ -1097,7 +1097,11 @@ if start_button:
                 data = data.dropna(subset=["Close"])
                 if resample_freq:
                     data.index = pd.to_datetime(data.index)
-                    data = data.resample(resample_freq).agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}).dropna()
+                    # offset="9h" -> geser titik awal bin resample supaya "nempel" di jam buka
+                    # bursa IDX (09:00 WIB), bukan dari tengah malam (00:00). Tanpa ini, candle
+                    # 2/3/4 Jam jadi kepotong salah (mis. berlabel 08:00/12:00, padahal harusnya
+                    # 09:00/13:00 sesuai jam sesi perdagangan), sehingga OHLC-nya beda dari TradingView.
+                    data = data.resample(resample_freq, offset="9h").agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}).dropna()
 
                 if len(data) < 100: continue
 
