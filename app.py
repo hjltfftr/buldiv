@@ -1279,20 +1279,41 @@ if start_button:
         if cek_kualitas_setup:
             st.write("Mengunduh data IHSG untuk perbandingan kekuatan relatif...")
             try:
-                ihsg_full_data = yf.download(
-                    tickers="^JKSE",
+                ihsg_raw = yf.download(
+                    tickers=["^JKSE"],
                     start=start_yf.strftime('%Y-%m-%d'),
                     end=end_yf.strftime('%Y-%m-%d'),
                     interval=data_interval,
+                    group_by="ticker",
                     auto_adjust=False,
                     progress=False,
+                    threads=True,
                 )
+                # yfinance kadang mengembalikan kolom MultiIndex (Ticker, Field) walau
+                # cuma 1 ticker diminta -- ekstrak persis seperti cara saham biasa di-extract
+                # (lihat loop utama di bawah), supaya Close/High/Low/Volume selalu jadi Series
+                # rata (bukan DataFrame bersarang) sebelum dipakai di get_relative_strength_vs_ihsg.
+                if isinstance(ihsg_raw.columns, pd.MultiIndex):
+                    if "^JKSE" in ihsg_raw.columns.get_level_values(0):
+                        ihsg_full_data = ihsg_raw["^JKSE"].copy()
+                    else:
+                        ihsg_full_data = ihsg_raw.droplevel(-1, axis=1).copy()
+                else:
+                    ihsg_full_data = ihsg_raw.copy()
+
+                ihsg_full_data = ihsg_full_data.dropna(subset=["Close"])
+
                 if resample_freq and not ihsg_full_data.empty:
                     ihsg_full_data.index = pd.to_datetime(ihsg_full_data.index)
                     ihsg_full_data = ihsg_full_data.resample(resample_freq, offset="9h").agg(
                         {'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}
                     ).dropna()
-            except Exception:
+
+                if ihsg_full_data.empty or len(ihsg_full_data) < 25:
+                    st.warning("⚠️ Data IHSG kosong/kurang setelah diproses -- kolom 'RS vs IHSG' akan N/A untuk semua saham.")
+                    ihsg_full_data = None
+            except Exception as e:
+                st.warning(f"⚠️ Gagal mengambil data IHSG ({str(e)[:80]}) -- kolom 'RS vs IHSG' akan N/A untuk semua saham.")
                 ihsg_full_data = None
 
         st.write("Memproses indikator dan sinyal tiap emiten...")
