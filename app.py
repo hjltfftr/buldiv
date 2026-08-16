@@ -657,6 +657,16 @@ def get_volume_status(df, length, mult, max_range=15.0, sma_vol_len=20):
 st.set_page_config(page_title="IHSG Screener by LTF", page_icon="📊", layout="wide", initial_sidebar_state="expanded")
 
 # =========================================
+# SESSION STATE (biar hasil screening tidak hilang saat tombol lain diklik,
+# misalnya tombol Download Excel — Streamlit rerun seluruh script tiap
+# ada tombol yang ditekan, jadi hasil screening perlu "disimpan" di sini)
+# =========================================
+if "df_hasil" not in st.session_state:
+    st.session_state.df_hasil = None
+if "screening_meta" not in st.session_state:
+    st.session_state.screening_meta = {}
+
+# =========================================
 # CUSTOM THEME (CSS)
 # =========================================
 st.markdown("""
@@ -1357,12 +1367,31 @@ if start_button:
         status.update(label="Selesai menganalisa pasar!", state="complete")
         progress_bar.empty()
 
-    # Tampilkan Hasil
+    # Simpan hasil ke session_state (bukan langsung ditampilkan di sini),
+    # supaya hasilnya tetap ada walau nanti tombol Download diklik (yang
+    # otomatis men-trigger rerun script dari atas oleh Streamlit).
     df_hasil = pd.DataFrame(hasil)
-
     if not df_hasil.empty:
         df_hasil = df_hasil.sort_values(by="Saham").reset_index(drop=True)
-        st.success(f"🎉 Pencarian Selesai! Ditemukan **{len(df_hasil)}** saham yang sesuai dengan kriteria pada tanggal **{target_date.strftime('%d %b %Y')}**.")
+
+    st.session_state.df_hasil = df_hasil
+    st.session_state.screening_meta = {
+        "target_date": target_date,
+        "tf_choice": tf_choice,
+    }
+
+# =========================================
+# TAMPILKAN HASIL (di luar blok start_button, dibaca dari session_state,
+# supaya tidak reset saat tombol Download Excel diklik)
+# =========================================
+if st.session_state.df_hasil is not None:
+    df_hasil = st.session_state.df_hasil
+    meta = st.session_state.screening_meta
+    disp_date = meta.get("target_date", target_date)
+    disp_tf = meta.get("tf_choice", tf_choice)
+
+    if not df_hasil.empty:
+        st.success(f"🎉 Pencarian Selesai! Ditemukan **{len(df_hasil)}** saham yang sesuai dengan kriteria pada tanggal **{disp_date.strftime('%d %b %Y')}**.")
 
         # Dataframe dengan lebar mengikuti container
         st.dataframe(df_hasil, use_container_width=True)
@@ -1377,9 +1406,10 @@ if start_button:
             st.download_button(
                 label="📥 Download Hasil via Excel",
                 data=output.getvalue(),
-                file_name=f"Screener_{target_date.strftime('%Y%m%d')}_{tf_choice.replace(' ', '_')}.xlsx",
+                file_name=f"Screener_{disp_date.strftime('%Y%m%d')}_{disp_tf.replace(' ', '_')}.xlsx",
                 mime="application/vnd.ms-excel",
-                use_container_width=True
+                use_container_width=True,
+                key="download_hasil_screening_btn"
             )
     else:
-        st.warning(f"😔 Tidak ada saham yang memenuhi kriteria pada timeframe {tf_choice} untuk tanggal {target_date.strftime('%d %b %Y')}.")
+        st.warning(f"😔 Tidak ada saham yang memenuhi kriteria pada timeframe {disp_tf} untuk tanggal {disp_date.strftime('%d %b %Y')}.")
