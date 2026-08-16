@@ -306,6 +306,89 @@ def check_hybrid_bullish_divergence(
     df["Hybrid_Div_PivotClose"] = pivot_close
     return df
 
+# =========================================
+# 💥 FUNGSI BIG VOLUME KILL TREND (BARU)
+# =========================================
+# Logika:
+#   1. DOWNTREND    -> harga turun (Close sekarang < Close N bar lalu, minimal
+#                       sekian %) selama `trend_lookback` bar terakhir sebelum
+#                       bar climax.
+#   2. CLIMAX BAR   -> bar dengan Volume >> rata-rata (Volume > vol_mult x
+#                       SMA(Volume, vol_sma_len)) DAN membuat Low terendah baru
+#                       dibanding `trend_lookback` bar sebelumnya (tanda capitulation
+#                       / penyerapan supply besar-besaran di titik bawah).
+#   3. KONFIRMASI   -> dalam `confirm_bars` bar setelah climax, harga Close
+#                       berhasil ditutup di atas High bar climax (bukti downtrend
+#                       benar-benar "terbunuh" dan reversal ke uptrend valid,
+#                       bukan sekadar bounce sesaat).
+# Sinyal dicatat di bar KONFIRMASI (agar bisa discreening seperti sinyal lain),
+# tapi tanggal & harga low climax disimpan terpisah di kolom KillTrend_Date /
+# KillTrend_Low untuk ditampilkan di tabel hasil.
+def check_big_volume_kill_trend(
+    df,
+    trend_lookback=10,
+    vol_mult=2.0,
+    vol_sma_len=20,
+    confirm_bars=5,
+    min_downtrend_pct=-3.0,
+):
+    vol_sma = df["Volume"].rolling(vol_sma_len).mean()
+
+    n = len(df)
+    close_arr = df["Close"].values
+    low_arr = df["Low"].values
+    high_arr = df["High"].values
+    vol_arr = df["Volume"].values
+    vol_sma_arr = vol_sma.values
+    dates = df.index
+
+    signals = [""] * n
+    climax_dates = [""] * n
+    climax_lows = [np.nan] * n
+
+    i = trend_lookback
+    while i < n:
+        if pd.isna(vol_sma_arr[i]) or vol_sma_arr[i] == 0:
+            i += 1
+            continue
+
+        is_big_vol = vol_arr[i] > (vol_mult * vol_sma_arr[i])
+        if not is_big_vol:
+            i += 1
+            continue
+
+        window_low = low_arr[i - trend_lookback:i].min()
+        is_new_low = low_arr[i] <= window_low
+
+        prev_close = close_arr[i - trend_lookback]
+        pct_change = ((close_arr[i] - prev_close) / prev_close * 100) if prev_close != 0 else 0
+        is_downtrend = pct_change <= min_downtrend_pct
+
+        if not (is_new_low and is_downtrend):
+            i += 1
+            continue
+
+        # cari konfirmasi reversal: Close menembus ke atas High bar climax
+        end_idx = min(i + confirm_bars, n - 1)
+        confirm_at = None
+        for j in range(i + 1, end_idx + 1):
+            if close_arr[j] > high_arr[i]:
+                confirm_at = j
+                break
+
+        if confirm_at is not None:
+            signals[confirm_at] = "💥 BIG VOLUME KILL TREND"
+            climax_dates[confirm_at] = dates[i].strftime('%Y-%m-%d')
+            climax_lows[confirm_at] = low_arr[i]
+            i = confirm_at + 1  # lompat lewati bar yang sudah dipakai
+        else:
+            i += 1
+
+    df["KillTrend_Signal"] = signals
+    df["KillTrend_Date"] = climax_dates
+    df["KillTrend_Low"] = climax_lows
+    return df
+
 def get_ma_state(close, ma_list):
     if any(pd.isna(x) for x in ma_list): return "JAUH"
     spread = (max(ma_list) - min(ma_list)) / close
@@ -415,6 +498,14 @@ with st.sidebar.expander("🔥 Sinyal Divergence", expanded=True):
     div_sync_tolerance = st.slider("↳ Toleransi Sinkronisasi Pivot utk label STRONG (bar):", 0, 10, 3)
     div_use_vol_filter = st.checkbox("↳ Wajib Volume di Atas Rata-rata (SMA20) saat STRONG", value=False)
 
+with st.sidebar.expander("💥 Big Volume Kill Trend", expanded=False):
+    filter_killtrend = st.checkbox("💥 Big Volume Kill Trend (Downtrend → Reversal)", value=False)
+    st.caption("Mendeteksi downtrend yang 'dibunuh' oleh lonjakan volume besar di titik low (capitulation), lalu dikonfirmasi harga menembus ke atas high bar tersebut.")
+    kt_trend_lookback = st.slider("↳ Jumlah Bar Downtrend Sebelum Climax:", 3, 30, 10)
+    kt_vol_mult = st.slider("↳ Kelipatan Volume vs SMA20 (Climax):", 1.2, 5.0, 2.0, 0.1)
+    kt_confirm_bars = st.slider("↳ Maks Bar utk Konfirmasi Reversal (Break High Climax):", 1, 15, 5)
+    kt_min_downtrend_pct = st.slider("↳ Minimal Penurunan Harga Selama Lookback (%):", -30.0, 0.0, -3.0, 0.5)
+
 with st.sidebar.expander("📈 MACD, RSI & Stochastic RSI", expanded=False):
     filter_early_gc = st.checkbox("⚡ MACD Early GC (8,21,5)", value=False)
     filter_gc = st.checkbox("✅ MACD Fase GC (8,21,5)", value=False)
@@ -473,7 +564,7 @@ with col2:
 
 if start_button:
     all_filters = [
-        filter_div, filter_early_gc, filter_gc, filter_stoch_early_gc, filter_stoch_gc, filter_rsi_gc,
+        filter_div, filter_killtrend, filter_early_gc, filter_gc, filter_stoch_early_gc, filter_stoch_gc, filter_rsi_gc,
         filter_melilit, filter_rapat_up, filter_adx, filter_bb_buy, filter_bounce_ma20,
         filter_bounce_ma50, filter_dekat_ma20, filter_dekat_ma50, filter_dekat_ma100, filter_dekat_ma200,
         filter_vol_5, filter_vol_10, filter_vol_20, filter_uptrend, filter_struktur, filter_premarket
@@ -559,6 +650,15 @@ if start_button:
                     max_bar_gap=div_max_gap,
                     sync_tolerance=div_sync_tolerance,
                     use_vol_filter=div_use_vol_filter,
+                )
+
+                # Panggil fungsi Big Volume Kill Trend (parameter dari sidebar)
+                data = check_big_volume_kill_trend(
+                    data,
+                    trend_lookback=kt_trend_lookback,
+                    vol_mult=kt_vol_mult,
+                    confirm_bars=kt_confirm_bars,
+                    min_downtrend_pct=kt_min_downtrend_pct,
                 )
 
                 delta = close_series.diff()
@@ -651,6 +751,20 @@ if start_button:
                     if pd.notna(last_div_price) and last_div_price != 0:
                         change_div = round(((close - last_div_price) / last_div_price) * 100, 2)
 
+                # ================= TANGGAL & CHANGE BIG VOLUME KILL TREND =================
+                tanggal_killtrend = "-"
+                change_killtrend = "-"
+
+                if filter_killtrend and recent["KillTrend_Signal"].any():
+                    df_kill = recent[recent["KillTrend_Signal"] != ""]
+                    matched_signals.append("💥 BIG VOLUME KILL TREND")
+
+                    tanggal_killtrend = ", ".join([d for d in df_kill["KillTrend_Date"].tolist() if d])
+
+                    last_kill_low = df_kill["KillTrend_Low"].iloc[-1]
+                    if pd.notna(last_kill_low) and last_kill_low != 0:
+                        change_killtrend = round(((close - last_kill_low) / last_kill_low) * 100, 2)
+
                 if filter_uptrend and is_uptrend: matched_signals.append("📈 UPTREND")
                 if filter_struktur and "Bagus Sekali" in struktur_harga: matched_signals.append("🟢 STRUKTUR HH+HL")
 
@@ -715,6 +829,8 @@ if start_button:
                         "Sinyal Terdeteksi": " + ".join(matched_signals),
                         "Tgl Divergence": tanggal_buldiv,
                         "Change dr Divergence (%)": change_div,
+                        "Tgl Kill Trend": tanggal_killtrend,
+                        "Change dr Kill Trend (%)": change_killtrend,
                         "Struktur Harga (20B vs 20B)": struktur_harga,
                         "Uptrend Status": "✅ Ya" if is_uptrend else "❌ Tidak",
                         "Umur Uptrend (Bar)": umur_uptrend,
