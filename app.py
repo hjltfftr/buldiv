@@ -307,6 +307,210 @@ def check_hybrid_bullish_divergence(
     return df
 
 # =========================================
+# 📊 FUNGSI CCI BULLISH DIVERGENCE (BARU)
+# =========================================
+# Regular bullish divergence: harga bikin Low baru (lebih rendah dari pivot
+# sebelumnya) tapi CCI di pivot itu justru lebih tinggi (higher low) -> tanda
+# tekanan jual melemah meski harga masih turun. Pivot dilacak selama CCI
+# berada di area oversold (< oversold_level), lalu dikonfirmasi saat CCI
+# keluar (cross ke atas) dari area oversold tersebut.
+def check_cci_bullish_divergence(
+    df,
+    cci_period=20,
+    oversold_level=-100,
+    min_bar_gap=5,
+    max_bar_gap=80,
+    use_vol_filter=False,
+    vol_sma_len=20,
+):
+    tp = (df["High"] + df["Low"] + df["Close"]) / 3
+    sma_tp = tp.rolling(cci_period).mean()
+    mean_dev = tp.rolling(cci_period).apply(lambda x: np.mean(np.abs(x - x.mean())), raw=True)
+    mean_dev_safe = mean_dev.replace(0, np.nan)
+    df["CCI"] = (tp - sma_tp) / (0.015 * mean_dev_safe)
+
+    vol_sma = df["Volume"].rolling(vol_sma_len).mean()
+
+    n = len(df)
+    close_arr = df["Close"].values
+    low_arr = df["Low"].values
+    cci_arr = df["CCI"].values
+    vol_arr = df["Volume"].values
+    vol_sma_arr = vol_sma.values
+    dates = df.index
+
+    cur_p = cur_c = cur_b = None
+    prv_p = prv_c = prv_b = None
+
+    signals = [""] * n
+    pivot_dates = [""] * n
+    pivot_close = [np.nan] * n
+
+    def gap_ok(b1, b2):
+        if b1 is None or b2 is None:
+            return False
+        gap = abs(b2 - b1)
+        return min_bar_gap <= gap <= max_bar_gap
+
+    for i in range(1, n):
+        cci_now, cci_prev = cci_arr[i], cci_arr[i - 1]
+        if pd.isna(cci_now) or pd.isna(cci_prev):
+            continue
+
+        if cci_now < oversold_level:
+            if cur_p is None or low_arr[i] < cur_p:
+                cur_p = low_arr[i]
+                cur_b = i
+            if cur_c is None or cci_now < cur_c:
+                cur_c = cci_now
+
+        cross_up = (cci_prev < oversold_level) and (cci_now >= oversold_level)
+        if cross_up:
+            if gap_ok(prv_b, cur_b) and prv_p is not None and cur_p is not None:
+                if cur_p < prv_p and cur_c > prv_c:
+                    vol_ok = (not use_vol_filter) or (
+                        not pd.isna(vol_sma_arr[cur_b]) and vol_arr[cur_b] > vol_sma_arr[cur_b]
+                    )
+                    if vol_ok:
+                        signals[i] = "📊 CCI BULL DIV"
+                        pivot_dates[i] = dates[cur_b].strftime('%Y-%m-%d')
+                        pivot_close[i] = close_arr[cur_b]
+            prv_p, prv_c, prv_b = cur_p, cur_c, cur_b
+            cur_p, cur_c, cur_b = None, None, None
+
+    df["CCI_Div_Signal"] = signals
+    df["CCI_Div_PivotDate"] = pivot_dates
+    df["CCI_Div_PivotClose"] = pivot_close
+    return df
+
+# =========================================
+# 〰️ FUNGSI HYBRID STOCH RSI BULLISH DIVERGENCE (BARU)
+# =========================================
+# Sama persis konsep Hybrid MACD Divergence di atas, tapi oscillator-nya
+# Stoch RSI: pivot CEPAT pakai parameter (5,3,3) dan pivot STANDAR pakai
+# (14,3,3). Kalau pivot cepat & standar "sinkron" (berdekatan secara bar)
+# -> label STRONG. Kalau cuma pivot standar yang valid -> label STD.
+def check_hybrid_stochrsi_bullish_divergence(
+    df,
+    rsi_period=14,
+    fast_stoch_len=5,
+    fast_smooth_k=3,
+    std_stoch_len=14,
+    std_smooth_k=3,
+    oversold_level=20,
+    min_bar_gap=5,
+    max_bar_gap=80,
+    sync_tolerance=3,
+    use_vol_filter=False,
+    vol_sma_len=20,
+):
+    delta = df["Close"].diff()
+    gain = delta.where(delta > 0, 0).ewm(alpha=1 / rsi_period, min_periods=rsi_period, adjust=False).mean()
+    loss = (-delta.where(delta < 0, 0)).ewm(alpha=1 / rsi_period, min_periods=rsi_period, adjust=False).mean()
+    rsi = 100 - (100 / (1 + (gain / loss)))
+
+    def calc_stoch_k(rsi_series, stoch_len, smooth_k):
+        rsi_min = rsi_series.rolling(stoch_len).min()
+        rsi_max = rsi_series.rolling(stoch_len).max()
+        stoch = ((rsi_series - rsi_min) / (rsi_max - rsi_min)) * 100
+        return stoch.rolling(smooth_k).mean()
+
+    k_fast = calc_stoch_k(rsi, fast_stoch_len, fast_smooth_k)
+    k_std = calc_stoch_k(rsi, std_stoch_len, std_smooth_k)
+
+    vol_sma = df["Volume"].rolling(vol_sma_len).mean()
+
+    n = len(df)
+    close_arr = df["Close"].values
+    low_arr = df["Low"].values
+    vol_arr = df["Volume"].values
+    vol_sma_arr = vol_sma.values
+    kf = k_fast.values
+    ks = k_std.values
+    dates = df.index
+
+    cur_p1 = cur_k1 = cur_b1 = None
+    prv_p1 = prv_k1 = prv_b1 = None
+    fast_ok, fast_bar = False, None
+
+    cur_p2 = cur_k2 = cur_b2 = None
+    prv_p2 = prv_k2 = prv_b2 = None
+
+    signals = [""] * n
+    tags = [""] * n
+    pivot_dates = [""] * n
+    pivot_close = [np.nan] * n
+
+    def gap_ok(b1, b2):
+        if b1 is None or b2 is None:
+            return False
+        gap = abs(b2 - b1)
+        return min_bar_gap <= gap <= max_bar_gap
+
+    for i in range(1, n):
+        if pd.isna(kf[i]) or pd.isna(ks[i]):
+            continue
+
+        low_now = low_arr[i]
+
+        # Reset flag FAST saat STD baru masuk fase oversold baru
+        if ks[i] < oversold_level and ks[i - 1] >= oversold_level:
+            fast_ok, fast_bar = False, None
+
+        # ---- Tracking pivot FAST (5,3,3) ----
+        if kf[i] < oversold_level:
+            if cur_p1 is None or low_now < cur_p1:
+                cur_p1 = low_now
+                cur_b1 = i
+            if cur_k1 is None or kf[i] < cur_k1:
+                cur_k1 = kf[i]
+
+        cross1 = (kf[i - 1] < oversold_level) and (kf[i] >= oversold_level)
+        if cross1:
+            if gap_ok(prv_b1, cur_b1) and prv_p1 is not None and cur_p1 is not None:
+                if cur_p1 < prv_p1 and cur_k1 > prv_k1:
+                    fast_ok, fast_bar = True, cur_b1
+                    signals[i] = "〰️ FAST STOCHRSI DIV"
+                    tags[i] = "FAST"
+                    pivot_dates[i] = dates[cur_b1].strftime('%Y-%m-%d')
+                    pivot_close[i] = close_arr[cur_b1]
+            prv_p1, prv_k1, prv_b1 = cur_p1, cur_k1, cur_b1
+            cur_p1, cur_k1, cur_b1 = None, None, None
+
+        # ---- Tracking pivot STD (14,3,3) ----
+        if ks[i] < oversold_level:
+            if cur_p2 is None or low_now < cur_p2:
+                cur_p2 = low_now
+                cur_b2 = i
+            if cur_k2 is None or ks[i] < cur_k2:
+                cur_k2 = ks[i]
+
+        cross2 = (ks[i - 1] < oversold_level) and (ks[i] >= oversold_level)
+        if cross2:
+            if gap_ok(prv_b2, cur_b2) and prv_p2 is not None and cur_p2 is not None:
+                if cur_p2 < prv_p2 and cur_k2 > prv_k2:
+                    vol_ok = (not use_vol_filter) or (
+                        not pd.isna(vol_sma_arr[cur_b2]) and vol_arr[cur_b2] > vol_sma_arr[cur_b2]
+                    )
+                    synced = fast_ok and fast_bar is not None and abs(fast_bar - cur_b2) <= sync_tolerance
+                    if synced and vol_ok:
+                        signals[i] = "🔥 STRONG STOCHRSI DIV"
+                        tags[i] = "STRONG"
+                    else:
+                        signals[i] = "🐢 STD STOCHRSI DIV"
+                        tags[i] = "STD"
+                    pivot_dates[i] = dates[cur_b2].strftime('%Y-%m-%d')
+                    pivot_close[i] = close_arr[cur_b2]
+            prv_p2, prv_k2, prv_b2 = cur_p2, cur_k2, cur_b2
+            cur_p2, cur_k2, cur_b2 = None, None, None
+
+    df["StochRSI_Div_Signal"] = signals
+    df["StochRSI_Div_Tag"] = tags
+    df["StochRSI_Div_PivotDate"] = pivot_dates
+    df["StochRSI_Div_PivotClose"] = pivot_close
+    return df
+
+# =========================================
 # 💥 FUNGSI BIG VOLUME KILL TREND (BARU)
 # =========================================
 # Logika:
@@ -498,6 +702,21 @@ with st.sidebar.expander("🔥 Sinyal Divergence", expanded=True):
     div_sync_tolerance = st.slider("↳ Toleransi Sinkronisasi Pivot utk label STRONG (bar):", 0, 10, 3)
     div_use_vol_filter = st.checkbox("↳ Wajib Volume di Atas Rata-rata (SMA20) saat STRONG", value=False)
 
+    st.markdown("---")
+    filter_cci_div = st.checkbox("📊 CCI Bullish Divergence", value=False)
+    cci_period = st.slider("↳ Periode CCI:", 10, 50, 20)
+    cci_oversold = st.slider("↳ Level Oversold CCI:", -200, -50, -100, 10)
+    cci_min_gap, cci_max_gap = st.slider("↳ Jarak Antar Swing CCI (bar), Min - Maks:", 1, 150, (5, 80))
+    cci_use_vol_filter = st.checkbox("↳ Wajib Volume di Atas Rata-rata (SMA20) saat Pivot CCI", value=False)
+
+    st.markdown("---")
+    filter_stochrsi_div = st.checkbox("〰️ Hybrid Stoch RSI Bullish Divergence (Fast 5,3,3 + Std 14,3,3)", value=False)
+    st.caption("Sama seperti Hybrid MACD Divergence, tapi oscillator-nya Stoch RSI: pivot cepat pakai 5,3,3 dan pivot standar pakai 14,3,3.")
+    stochrsi_oversold = st.slider("↳ Level Oversold Stoch RSI:", 5, 50, 20)
+    stochrsi_min_gap, stochrsi_max_gap = st.slider("↳ Jarak Antar Swing Stoch RSI (bar), Min - Maks:", 1, 150, (5, 80))
+    stochrsi_sync_tolerance = st.slider("↳ Toleransi Sinkronisasi Pivot utk label STRONG (bar):", 0, 10, 3, key="stochrsi_sync")
+    stochrsi_use_vol_filter = st.checkbox("↳ Wajib Volume di Atas Rata-rata (SMA20) saat STRONG", value=False, key="stochrsi_vol")
+
 with st.sidebar.expander("💥 Big Volume Kill Trend", expanded=False):
     filter_killtrend = st.checkbox("💥 Big Volume Kill Trend (Downtrend → Reversal)", value=False)
     st.caption("Mendeteksi downtrend yang 'dibunuh' oleh lonjakan volume besar di titik low (capitulation), lalu dikonfirmasi harga menembus ke atas high bar tersebut.")
@@ -564,7 +783,7 @@ with col2:
 
 if start_button:
     all_filters = [
-        filter_div, filter_killtrend, filter_early_gc, filter_gc, filter_stoch_early_gc, filter_stoch_gc, filter_rsi_gc,
+        filter_div, filter_cci_div, filter_stochrsi_div, filter_killtrend, filter_early_gc, filter_gc, filter_stoch_early_gc, filter_stoch_gc, filter_rsi_gc,
         filter_melilit, filter_rapat_up, filter_adx, filter_bb_buy, filter_bounce_ma20,
         filter_bounce_ma50, filter_dekat_ma20, filter_dekat_ma50, filter_dekat_ma100, filter_dekat_ma200,
         filter_vol_5, filter_vol_10, filter_vol_20, filter_uptrend, filter_struktur, filter_premarket
@@ -650,6 +869,26 @@ if start_button:
                     max_bar_gap=div_max_gap,
                     sync_tolerance=div_sync_tolerance,
                     use_vol_filter=div_use_vol_filter,
+                )
+
+                # Panggil fungsi CCI Bullish Divergence (parameter dari sidebar)
+                data = check_cci_bullish_divergence(
+                    data,
+                    cci_period=cci_period,
+                    oversold_level=cci_oversold,
+                    min_bar_gap=cci_min_gap,
+                    max_bar_gap=cci_max_gap,
+                    use_vol_filter=cci_use_vol_filter,
+                )
+
+                # Panggil fungsi Hybrid Stoch RSI Bullish Divergence (parameter dari sidebar)
+                data = check_hybrid_stochrsi_bullish_divergence(
+                    data,
+                    oversold_level=stochrsi_oversold,
+                    min_bar_gap=stochrsi_min_gap,
+                    max_bar_gap=stochrsi_max_gap,
+                    sync_tolerance=stochrsi_sync_tolerance,
+                    use_vol_filter=stochrsi_use_vol_filter,
                 )
 
                 # Panggil fungsi Big Volume Kill Trend (parameter dari sidebar)
@@ -751,6 +990,34 @@ if start_button:
                     if pd.notna(last_div_price) and last_div_price != 0:
                         change_div = round(((close - last_div_price) / last_div_price) * 100, 2)
 
+                # ================= TANGGAL & CHANGE CCI DIVERGENCE =================
+                tanggal_ccidiv = "-"
+                change_ccidiv = "-"
+
+                if filter_cci_div and recent["CCI_Div_Signal"].any():
+                    df_cci = recent[recent["CCI_Div_Signal"] != ""]
+                    matched_signals.extend(list(set(df_cci["CCI_Div_Signal"])))
+
+                    tanggal_ccidiv = ", ".join([d for d in df_cci["CCI_Div_PivotDate"].tolist() if d])
+
+                    last_cci_price = df_cci["CCI_Div_PivotClose"].iloc[-1]
+                    if pd.notna(last_cci_price) and last_cci_price != 0:
+                        change_ccidiv = round(((close - last_cci_price) / last_cci_price) * 100, 2)
+
+                # ================= TANGGAL & CHANGE HYBRID STOCH RSI DIVERGENCE =================
+                tanggal_stochrsidiv = "-"
+                change_stochrsidiv = "-"
+
+                if filter_stochrsi_div and recent["StochRSI_Div_Signal"].any():
+                    df_stochrsi = recent[recent["StochRSI_Div_Signal"] != ""]
+                    matched_signals.extend(list(set(df_stochrsi["StochRSI_Div_Signal"])))
+
+                    tanggal_stochrsidiv = ", ".join([d for d in df_stochrsi["StochRSI_Div_PivotDate"].tolist() if d])
+
+                    last_stochrsi_price = df_stochrsi["StochRSI_Div_PivotClose"].iloc[-1]
+                    if pd.notna(last_stochrsi_price) and last_stochrsi_price != 0:
+                        change_stochrsidiv = round(((close - last_stochrsi_price) / last_stochrsi_price) * 100, 2)
+
                 # ================= TANGGAL & CHANGE BIG VOLUME KILL TREND =================
                 tanggal_killtrend = "-"
                 change_killtrend = "-"
@@ -829,6 +1096,10 @@ if start_button:
                         "Sinyal Terdeteksi": " + ".join(matched_signals),
                         "Tgl Divergence": tanggal_buldiv,
                         "Change dr Divergence (%)": change_div,
+                        "Tgl CCI Div": tanggal_ccidiv,
+                        "Change dr CCI Div (%)": change_ccidiv,
+                        "Tgl StochRSI Div": tanggal_stochrsidiv,
+                        "Change dr StochRSI Div (%)": change_stochrsidiv,
                         "Tgl Kill Trend": tanggal_killtrend,
                         "Change dr Kill Trend (%)": change_killtrend,
                         "Struktur Harga (20B vs 20B)": struktur_harga,
