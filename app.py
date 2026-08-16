@@ -654,12 +654,194 @@ def get_volume_status(df, length, mult, max_range=15.0, sma_vol_len=20):
 # =========================================
 # UI STREAMLIT
 # =========================================
-st.set_page_config(page_title="Multi-Signal Screener", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="IHSG Screener by LTF", page_icon="📊", layout="wide", initial_sidebar_state="expanded")
+
+# =========================================
+# CUSTOM THEME (CSS)
+# =========================================
+st.markdown("""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800&family=Inter:wght@400;500;600&display=swap');
+
+    html, body, [class*="css"]  { font-family: 'Inter', sans-serif; }
+
+    :root{
+        --bg-deep:#0a0e1a;
+        --bg-panel:#131a2b;
+        --bg-panel-soft:#161f34;
+        --accent-cyan:#22d3ee;
+        --accent-purple:#a78bfa;
+        --accent-amber:#fbbf24;
+        --accent-green:#34d399;
+        --accent-pink:#f472b6;
+        --text-soft:#c7d2e1;
+        --text-muted:#8291ab;
+        --border-soft:rgba(148,163,184,0.16);
+    }
+
+    /* App background */
+    .stApp{
+        background:
+            radial-gradient(circle at 8% -10%, rgba(34,211,238,0.10) 0%, transparent 40%),
+            radial-gradient(circle at 95% 0%, rgba(167,139,250,0.10) 0%, transparent 40%),
+            linear-gradient(180deg, #0a0e1a 0%, #0b1120 55%, #090c16 100%);
+        color: var(--text-soft);
+    }
+
+    /* Hide default streamlit chrome clutter a bit */
+    header[data-testid="stHeader"]{ background: transparent; }
+
+    /* Sidebar */
+    section[data-testid="stSidebar"]{
+        background: linear-gradient(180deg, #0d1424 0%, #0a0e1a 100%);
+        border-right: 1px solid var(--border-soft);
+    }
+    section[data-testid="stSidebar"] .block-container{ padding-top: 1.2rem; }
+
+    /* Sidebar title */
+    section[data-testid="stSidebar"] h1{
+        font-family:'Poppins',sans-serif;
+        font-weight:700;
+        font-size: 1.35rem;
+        background: linear-gradient(90deg, var(--accent-cyan), var(--accent-purple));
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        padding-bottom: 0.6rem;
+        border-bottom: 1px solid var(--border-soft);
+        margin-bottom: 0.8rem;
+    }
+
+    /* Expanders in sidebar = colorful cards */
+    section[data-testid="stSidebar"] [data-testid="stExpander"]{
+        background: var(--bg-panel);
+        border: 1px solid var(--border-soft);
+        border-radius: 12px;
+        margin-bottom: 10px;
+        overflow: hidden;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+    }
+    section[data-testid="stSidebar"] [data-testid="stExpander"] summary{
+        font-weight:600;
+        color: var(--text-soft);
+    }
+    section[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover{
+        color: var(--accent-cyan);
+    }
+
+    /* Checkboxes accent color */
+    [data-testid="stCheckbox"] label span{ color: var(--text-soft); }
+    input[type="checkbox"]{ accent-color: var(--accent-cyan); }
+
+    /* Sliders */
+    div[data-testid="stSlider"] [role="slider"]{
+        background-color: var(--accent-cyan) !important;
+        box-shadow: 0 0 0 4px rgba(34,211,238,0.18);
+    }
+    div[data-testid="stSlider"] .stSliderTrackHighlight{ background: linear-gradient(90deg, var(--accent-cyan), var(--accent-purple)) !important; }
+
+    /* Selectbox / number / date inputs */
+    div[data-baseweb="select"] > div, .stNumberInput input, .stDateInput input{
+        background-color: var(--bg-panel-soft) !important;
+        border: 1px solid var(--border-soft) !important;
+        color: var(--text-soft) !important;
+        border-radius: 8px !important;
+    }
+
+    /* Divider */
+    hr{ border-color: var(--border-soft) !important; }
+
+    /* Primary button (MULAI SCREENING) */
+    .stButton > button[kind="primary"]{
+        background: linear-gradient(90deg, #06b6d4 0%, #6366f1 55%, #a855f7 100%);
+        border: none;
+        border-radius: 14px;
+        padding: 0.85rem 1.2rem;
+        font-weight: 700;
+        font-size: 1.02rem;
+        letter-spacing: 0.03em;
+        color: white;
+        box-shadow: 0 8px 24px rgba(99,102,241,0.35);
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+    .stButton > button[kind="primary"]:hover{
+        transform: translateY(-2px);
+        box-shadow: 0 12px 30px rgba(168,85,247,0.45);
+    }
+
+    /* Download button */
+    .stDownloadButton > button{
+        background: linear-gradient(90deg, #10b981 0%, #22d3ee 100%);
+        border: none;
+        border-radius: 12px;
+        color: #04121a;
+        font-weight: 700;
+    }
+
+    /* Alerts (success/warning/error/info) - soften + colorize border */
+    div[data-testid="stAlertContentSuccess"], div[data-testid="stNotification"]{ border-radius: 12px; }
+    .stAlert{ border-radius: 12px; }
+
+    /* Dataframe */
+    [data-testid="stDataFrame"]{
+        border: 1px solid var(--border-soft);
+        border-radius: 12px;
+        overflow: hidden;
+    }
+
+    /* Filter summary chips */
+    .filter-summary-box{
+        background: var(--bg-panel);
+        border: 1px solid var(--border-soft);
+        border-radius: 14px;
+        padding: 14px 16px;
+        margin-bottom: 1.1rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+    }
+    .filter-summary-empty{
+        color: var(--text-muted);
+        font-style: italic;
+        font-size: 0.92rem;
+    }
+    .filter-chip{
+        display:inline-block;
+        padding: 6px 13px;
+        border-radius: 999px;
+        font-size: 0.82rem;
+        font-weight: 600;
+        color: #06111d;
+        background: linear-gradient(90deg, var(--chip-a), var(--chip-b));
+        box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+    }
+    .filter-chip:nth-child(6n+1){ --chip-a:#22d3ee; --chip-b:#67e8f9; }
+    .filter-chip:nth-child(6n+2){ --chip-a:#a78bfa; --chip-b:#c4b5fd; }
+    .filter-chip:nth-child(6n+3){ --chip-a:#34d399; --chip-b:#6ee7b7; }
+    .filter-chip:nth-child(6n+4){ --chip-a:#fbbf24; --chip-b:#fcd34d; }
+    .filter-chip:nth-child(6n+5){ --chip-a:#f472b6; --chip-b:#f9a8d4; }
+    .filter-chip:nth-child(6n+6){ --chip-a:#60a5fa; --chip-b:#93c5fd; }
+
+    .section-label{
+        font-family:'Poppins',sans-serif;
+        font-weight:700;
+        font-size:1.05rem;
+        color: var(--text-soft);
+        margin-bottom: 0.5rem;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # Judul Utama
-st.markdown("<h1 style='text-align: center; color: #1E88E5;'>📊 Multi-Signal Screener</h1>", unsafe_allow_html=True)
-st.markdown("<h4 style='text-align: center; color: gray;'>Hybrid Divergence, Moving Average & Bandarmologi (IDX)</h4>", unsafe_allow_html=True)
-st.markdown("<p style='text-align: center; color: gray; font-size: 13px;'>🙏 Thanks to kak gitaketawa aka anak gawang aka mahaguru karyawan IHSG</p>", unsafe_allow_html=True)
+st.markdown("""
+<h1 style='text-align:center; font-family:"Poppins",sans-serif; font-weight:800; font-size:2.6rem;
+    background: linear-gradient(90deg, #22d3ee 0%, #a78bfa 50%, #f472b6 100%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom:0;'>
+    📊 IHSG Screener <span style="-webkit-text-fill-color:#8291ab; font-weight:600; font-size:1.6rem;">by LTF</span>
+</h1>
+""", unsafe_allow_html=True)
+st.markdown("<h4 style='text-align: center; color: #8291ab; font-weight:500; margin-top:0.3rem;'>Hybrid Divergence, Moving Average &amp; Bandarmologi (IDX)</h4>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; color: #64748b; font-size: 13px;'>🙏 Thanks to kak gitaketawa aka anak gawang aka mahaguru karyawan IHSG</p>", unsafe_allow_html=True)
 st.divider()
 
 # Sidebar Configuration
@@ -696,8 +878,8 @@ with st.sidebar.expander("🌅 Screener Khusus Pre-Market", expanded=False):
     st.caption("Skenario ideal disiapkan sore/malam hari: \n1. Vol Spike >1.5x\n2. Momentum (MACD GC / RSI > 50)\n3. Close kuat (High/Marubozu)\n4. Rebound MA penting.")
 
 with st.sidebar.expander("🔥 Sinyal Divergence", expanded=True):
-    filter_div = st.checkbox("🔥 Hybrid Bullish Divergence (MACD Fast 8,21,5 + Std 12,26,9)", value=True)
-    div_use_trend_filter = st.checkbox("↳ Filter Tren (Regular Div hanya valid saat Close < MA50)", value=True)
+    filter_div = st.checkbox("🔥 Hybrid Bullish Divergence (MACD Fast 8,21,5 + Std 12,26,9)", value=False)
+    div_use_trend_filter = st.checkbox("↳ Filter Tren (Regular Div hanya valid saat Close < MA50)", value=False)
     div_sync_tolerance = st.slider("↳ Toleransi Sinkronisasi Pivot utk label STRONG (bar):", 0, 10, 3)
     div_use_vol_filter = st.checkbox("↳ Wajib Volume di Atas Rata-rata (SMA20) saat STRONG", value=False)
 
@@ -764,6 +946,48 @@ with st.sidebar.expander("📊 Filter Volume Akumulasi", expanded=False):
     filter_vol_10 = st.checkbox("✅ Akumulasi/Ascension 10 Bar", value=False)
     filter_vol_20 = st.checkbox("✅ Akumulasi/Ascension 20 Bar", value=False)
 
+# =========================================
+# RINGKASAN SINYAL / FILTER YANG DIPILIH
+# =========================================
+filter_catalog = [
+    (filter_premarket, "🌅 Pre-Market Setup"),
+    (filter_div, "🔥 Hybrid Bullish Divergence (MACD)"),
+    (filter_cci_div, "📊 CCI Bullish Divergence"),
+    (filter_stochrsi_div, "〰️ Hybrid Stoch RSI Divergence"),
+    (filter_killtrend, "💥 Big Volume Kill Trend"),
+    (filter_early_gc, "⚡ MACD Early GC"),
+    (filter_gc, "✅ MACD Fase GC"),
+    (filter_rsi_gc, "📈 RSI Golden Cross"),
+    (filter_stoch_early_gc, "⚡ Stoch RSI Early GC"),
+    (filter_stoch_gc, "✅ Stoch RSI Fase GC"),
+    (filter_uptrend, "📈 Saham Uptrend"),
+    (filter_struktur, "🟢 Struktur HH & HL"),
+    (filter_bb_buy, "📉 BB Buy"),
+    (filter_bounce_ma20, "🏓 Pantulan MA20"),
+    (filter_bounce_ma50, "🏓 Pantulan MA50"),
+    (filter_adx, "🚀 ADX Trend Bullish"),
+    (filter_melilit, "🌪️ MA Melilit"),
+    (filter_rapat_up, "📏 MA Rapat Up"),
+    (filter_dekat_ma20, "🎯 Dekat MA20"),
+    (filter_dekat_ma50, "🎯 Dekat MA50"),
+    (filter_dekat_ma100, "🎯 Dekat MA100"),
+    (filter_dekat_ma200, "🎯 Dekat MA200"),
+    (filter_vol_5, "📦 Akumulasi Vol 5 Bar"),
+    (filter_vol_10, "📦 Akumulasi Vol 10 Bar"),
+    (filter_vol_20, "📦 Akumulasi Vol 20 Bar"),
+]
+active_filter_labels = [label for is_on, label in filter_catalog if is_on]
+
+st.markdown('<div class="section-label">🧾 Sinyal / Filter yang Sedang Dipilih</div>', unsafe_allow_html=True)
+if active_filter_labels:
+    chips_html = "".join([f'<span class="filter-chip">{lbl}</span>' for lbl in active_filter_labels])
+    st.markdown(f'<div class="filter-summary-box">{chips_html}</div>', unsafe_allow_html=True)
+else:
+    st.markdown(
+        '<div class="filter-summary-box filter-summary-empty">👈 Belum ada sinyal yang dicentang. '
+        'Silakan pilih minimal satu filter di sidebar sebelum memulai screening.</div>',
+        unsafe_allow_html=True
+    )
 
 tf_map = {
     "15 Menit": {"interval": "15m", "days_back": 60, "resample": None},
