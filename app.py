@@ -858,7 +858,133 @@ def get_invalidation_level(data, vcp_last_swing_low=None, lookback=30, max_dist_
     return round(float(data['Low'].tail(lookback).min()), 2)
 
 
-def calc_setup_score(vcp_score, rs_score, vol_dry_status, shakeout_score, bandar_status, breakout_score, stage_mult):
+def detect_ma_dynamics(data, tight_threshold=0.05, wide_threshold=0.08, stability_window=5, squeeze_lookback=10):
+    """Analisis dinamika rapat/melilit-nya MA3-5-10-20, bukan cuma status sesaat:
+    - MA Spread (%): jarak aktual (kontinu, bukan cuma label kategori RAPAT/RENGGANG/JAUH)
+    - Stabilitas: berapa dari N bar terakhir statusnya konsisten rapat (rendah = whipsaw/noise)
+    - Fresh Squeeze: baru mengetat dari renggang (sinyal plus, mirip BB squeeze) vs sudah lama rapat stagnan
+    """
+    ma_cols = ['MA3', 'MA5', 'MA10', 'MA20']
+    neutral = {"spread_pct": None, "spread_score": 50, "stability_label": "-", "stability_score": 50,
+               "squeeze_label": "-", "squeeze_score": 50}
+    if not all(c in data.columns for c in ma_cols) or len(data) < squeeze_lookback + stability_window + 5:
+        return neutral
+
+    ma_matrix = data[ma_cols]
+    spread_series = (ma_matrix.max(axis=1) - ma_matrix.min(axis=1)) / data['Close']
+    spread_series = spread_series.replace([np.inf, -np.inf], np.nan)
+
+    current_spread = spread_series.iloc[-1]
+    if pd.isna(current_spread):
+        return neutral
+
+    spread_pct = round(float(current_spread) * 100, 2)
+    spread_score = max(0.0, min(100.0, 100 - spread_pct * 20))  # 0% -> 100, 5% -> 0
+
+    recent_window = spread_series.tail(stability_window)
+    stable_count = int((recent_window <= tight_threshold).sum())
+    stability_label = f"{stable_count}/{stability_window} bar rapat"
+    stability_score = round(stable_count / stability_window * 100, 1)
+
+    pre_window = spread_series.iloc[-(squeeze_lookback + stability_window):-stability_window]
+    was_wide = bool((pre_window.max() > wide_threshold)) if len(pre_window) > 0 else False
+    is_tight_now = current_spread <= tight_threshold
+
+    if was_wide and is_tight_now:
+        squeeze_label, squeeze_score = "🆕 Fresh Squeeze (baru mengetat)", 100.0
+    elif is_tight_now:
+        squeeze_label, squeeze_score = "⏸️ Rapat Stagnan (sudah lama)", 50.0
+    else:
+        squeeze_label, squeeze_score = "-", 50.0
+
+    return {
+        "spread_pct": spread_pct, "spread_score": spread_score,
+        "stability_label": stability_label, "stability_score": stability_score,
+        "squeeze_label": squeeze_label, "squeeze_score": squeeze_score,
+    }
+
+
+def get_ma_major_position(data, near_threshold_pct=2.0):
+    """Cek apakah cluster MA yang rapat ini kebetulan nempel di MA50/100/200 (level
+    psikologis yang lebih dipercaya banyak trader/institusi) atau ngambang di kekosongan."""
+    close = data['Close'].iloc[-1]
+    levels = {}
+    for col in ['MA50', 'MA100', 'MA200']:
+        if col in data.columns and not pd.isna(data[col].iloc[-1]):
+            levels[col] = float(data[col].iloc[-1])
+    if not levels:
+        return "-", 50.0
+
+    nearest_col, nearest_val = min(levels.items(), key=lambda kv: abs(close - kv[1]))
+    dist_pct = abs(close - nearest_val) / close * 100
+
+    if dist_pct <= near_threshold_pct:
+        return f"🎯 Nempel {nearest_col} ({dist_pct:.1f}%)", 100.0
+    elif dist_pct <= near_threshold_pct * 2:
+        return f"↔️ Dekat {nearest_col} ({dist_pct:.1f}%)", 70.0
+    else:
+        return f"🌫️ Ngambang (terdekat {nearest_col} {dist_pct:.1f}%)", 40.0
+
+
+def count_failed_consolidations(data, lookback_bars=130, min_episode_len=3, breakdown_pct=3.0, breakdown_window=10):
+    """Hitung berapa kali dalam ~lookback_bars terakhir (default ~6 bulan data harian)
+    terjadi episode MA Rapat/Melilit yang berakhir breakdown (Close jatuh >=breakdown_pct%
+    di bawah MA20 dalam breakdown_window bar setelah episode itu berakhir). Rapat yang
+    'pertama kali' setelah downtrend panjang lebih dipercaya daripada rapat ke-4 kalinya
+    di area yang sama (pola gagal berulang = biasanya distribusi pelan-pelan)."""
+    ma_cols = ['MA3', 'MA5', 'MA10', 'MA20']
+    if not all(c in data.columns for c in ma_cols) or len(data) < lookback_bars + breakdown_window:
+        return "-", 50.0
+
+    sub = data.tail(lookback_bars + breakdown_window).reset_index(drop=True)
+    ma_matrix = sub[ma_cols]
+    spread_series = (ma_matrix.max(axis=1) - ma_matrix.min(axis=1)) / sub['Close']
+    is_tight = (spread_series <= 0.05).fillna(False).values
+    closes = sub['Close'].values
+    ma20 = sub['MA20'].values
+    n = len(sub)
+
+    episodes = []
+    i = 0
+    while i < n:
+        if is_tight[i]:
+            start = i
+            while i < n and is_tight[i]:
+                i += 1
+            end = i - 1
+            if (end - start + 1) >= min_episode_len:
+                episodes.append((start, end))
+        else:
+            i += 1
+
+    evaluable = [e for e in episodes if e[1] < n - 1]
+    failed_count = 0
+    for start, end in evaluable:
+        window_end = min(n, end + 1 + breakdown_window)
+        window_closes = closes[end + 1:window_end]
+        window_ma20 = ma20[end + 1:window_end]
+        broke_down = False
+        for c, m in zip(window_closes, window_ma20):
+            if pd.notna(m) and m > 0 and (m - c) / m * 100 >= breakdown_pct:
+                broke_down = True
+                break
+        if broke_down:
+            failed_count += 1
+
+    total_episodes = len(evaluable)
+    if total_episodes == 0:
+        return "🆕 Pertama Kali (blm ada riwayat rapat sebelumnya)", 90.0
+    if failed_count == 0:
+        return f"✅ Bersih (0/{total_episodes} gagal, ~{lookback_bars}B terakhir)", 90.0
+    elif failed_count == 1:
+        return f"🟡 {failed_count}/{total_episodes} Pernah Gagal", 60.0
+    else:
+        return f"🔴 {failed_count}/{total_episodes} Sering Gagal (waspada distribusi)", 20.0
+
+
+def calc_setup_score(vcp_score, rs_score, vol_dry_status, shakeout_score, bandar_status, breakout_score,
+                      stage_mult, spread_score=50.0, stability_score=50.0, squeeze_score=50.0,
+                      ma_major_score=50.0, failed_cons_score=50.0):
     """Gabungkan semua komponen jadi 1 skor 0-100. Stage Analysis dipakai sebagai
     MULTIPLIER (bukan additive) di akhir -- lihat alasannya di get_market_stage()."""
     vol_dry_map = {"AKUMULASI": 100, "ASCENSION": 90, "NO POLA": 50, "DISTRIBUSI": 10, "MARKDOWN": 0, "-": 50}
@@ -873,12 +999,17 @@ def calc_setup_score(vcp_score, rs_score, vol_dry_status, shakeout_score, bandar
     breakout_component = breakout_score if breakout_score is not None else 50  # netral kalau belum breakout
 
     raw = (
-        vcp_score * 0.25 +
-        rs_score * 0.20 +
-        vol_dry_score * 0.15 +
-        shakeout_score * 0.10 +
-        bandar_score * 0.15 +
-        breakout_component * 0.15
+        vcp_score * 0.15 +
+        spread_score * 0.08 +
+        stability_score * 0.07 +
+        squeeze_score * 0.05 +
+        ma_major_score * 0.08 +
+        failed_cons_score * 0.10 +
+        rs_score * 0.15 +
+        vol_dry_score * 0.10 +
+        shakeout_score * 0.05 +
+        bandar_score * 0.10 +
+        breakout_component * 0.07
     )
     return round(min(100, max(0, raw * stage_mult)), 1)
 
@@ -1517,6 +1648,11 @@ if start_button:
                 shakeout_label, shakeout_score_val = "-", 0
                 breakout_label, breakout_score_val = "-", None
                 invalidasi_level = "-"
+                spread_pct_val, spread_score_val = "-", 50
+                stability_label, stability_score_val = "-", 50
+                squeeze_label, squeeze_score_val = "-", 50
+                ma_major_label, ma_major_score_val = "-", 50
+                failed_cons_label, failed_cons_score_val = "-", 50
 
                 if cek_kualitas_setup:
                     try:
@@ -1533,6 +1669,16 @@ if start_button:
 
                         inv_level = get_invalidation_level(data, vcp_last_swing_low=vcp_result.get("last_swing_low"))
                         invalidasi_level = inv_level if inv_level is not None else "-"
+
+                        ma_dyn = detect_ma_dynamics(data)
+                        spread_pct_val = ma_dyn["spread_pct"] if ma_dyn["spread_pct"] is not None else "-"
+                        spread_score_val = ma_dyn["spread_score"]
+                        stability_label, stability_score_val = ma_dyn["stability_label"], ma_dyn["stability_score"]
+                        squeeze_label, squeeze_score_val = ma_dyn["squeeze_label"], ma_dyn["squeeze_score"]
+
+                        ma_major_label, ma_major_score_val = get_ma_major_position(data)
+
+                        failed_cons_label, failed_cons_score_val = count_failed_consolidations(data)
                     except Exception:
                         # Kalau ada error di analisis kualitas setup (mis. data IHSG
                         # bermasalah), JANGAN sampai gugurkan seluruh baris saham ini --
@@ -1543,6 +1689,11 @@ if start_button:
                         shakeout_label, shakeout_score_val = "⚠️ Error", 0
                         breakout_label, breakout_score_val = "⚠️ Error", None
                         invalidasi_level = "-"
+                        spread_pct_val, spread_score_val = "⚠️ Error", 50
+                        stability_label, stability_score_val = "⚠️ Error", 50
+                        squeeze_label, squeeze_score_val = "⚠️ Error", 50
+                        ma_major_label, ma_major_score_val = "⚠️ Error", 50
+                        failed_cons_label, failed_cons_score_val = "⚠️ Error", 50
 
                 # ================= TANGGAL & CHANGE DIVERGENCE MACD (FIXED) =================
                 tanggal_buldiv = "-"
@@ -1683,6 +1834,11 @@ if start_button:
                                 bandar_status=broksum_result,
                                 breakout_score=breakout_score_val,
                                 stage_mult=stage_mult,
+                                spread_score=spread_score_val,
+                                stability_score=stability_score_val,
+                                squeeze_score=squeeze_score_val,
+                                ma_major_score=ma_major_score_val,
+                                failed_cons_score=failed_cons_score_val,
                             )
                         except Exception:
                             setup_score_val = np.nan
@@ -1708,6 +1864,11 @@ if start_button:
                         "Candle Terakhir": last_candle_type,
                         "Vol 5 Bar (Mode)": stat_vol_5,
                         "VCP (Kontraksi)": vcp_label,
+                        "MA Spread (%)": spread_pct_val,
+                        "Stabilitas Rapat": stability_label,
+                        "Fresh Squeeze": squeeze_label,
+                        "Posisi vs MA Mayor": ma_major_label,
+                        "Riwayat Gagal Rapat": failed_cons_label,
                         "Stage Market (MA200)": stage_label,
                         "RS vs IHSG": rs_label,
                         "Shakeout/Spring": shakeout_label,
