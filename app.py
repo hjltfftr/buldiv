@@ -659,48 +659,76 @@ def get_volume_status(df, length, mult, max_range=15.0, sma_vol_len=20):
 # 🧬 FUNGSI ANALISIS KUALITAS SETUP LANJUTAN
 # (VCP, Stage Analysis, Relative Strength vs IHSG, Vol Breakout, Spring, Invalidasi)
 # =========================================
-def detect_vcp_contraction(data, lookback=90, pivot_window=3):
-    """Volatility Contraction Pattern (ala Minervini): apakah pullback dalam fase
-    konsolidasi makin dangkal & volume-nya makin kecil dibanding pullback sebelumnya."""
+def detect_vcp_contraction(data, lookback=90, pivot_window=5, min_swing_pct=3.0):
+    """Volatility Contraction Pattern (ala Minervini) pakai deteksi ZigZag: swing high/low
+    baru dianggap valid kalau pembalikannya minimal `min_swing_pct` dari swing sebelumnya --
+    ini supaya wiggle/noise harian kecil nggak ikut dihitung sebagai 'pullback', dan jumlah
+    pullback yang terdeteksi benar-benar mencerminkan struktur base, bukan selalu 4x template."""
     sub = data.tail(lookback).reset_index(drop=True)
     n = len(sub)
     if n < 20:
-        return {"score": 0, "label": "🔍 Data Kurang", "n_pullback": 0}
+        return {"score": 0, "label": "🔍 Data Kurang", "n_pullback": 0, "last_swing_low": None}
 
     highs, lows, vols = sub['High'].values, sub['Low'].values, sub['Volume'].values
-    pivots = []
+    raw = []
     for i in range(pivot_window, n - pivot_window):
         w_h = highs[i - pivot_window: i + pivot_window + 1]
         w_l = lows[i - pivot_window: i + pivot_window + 1]
         if highs[i] == w_h.max():
-            pivots.append((i, 'H', highs[i]))
+            raw.append((i, 'H', highs[i]))
         if lows[i] == w_l.min():
-            pivots.append((i, 'L', lows[i]))
-    pivots.sort(key=lambda x: x[0])
+            raw.append((i, 'L', lows[i]))
+    raw.sort(key=lambda x: x[0])
 
-    # Reduksi jadi urutan H-L-H-L berselang-seling, ambil yang paling ekstrem
-    # kalau ada beberapa pivot dengan tipe sama berurutan
-    seq = []
-    for p in pivots:
-        if seq and seq[-1][1] == p[1]:
-            if (p[1] == 'H' and p[2] > seq[-1][2]) or (p[1] == 'L' and p[2] < seq[-1][2]):
-                seq[-1] = p
+    # Gabung pivot beruntun bertipe sama, simpan yang paling ekstrem
+    reduced = []
+    for p in raw:
+        if reduced and reduced[-1][1] == p[1]:
+            if (p[1] == 'H' and p[2] > reduced[-1][2]) or (p[1] == 'L' and p[2] < reduced[-1][2]):
+                reduced[-1] = p
         else:
-            seq.append(p)
+            reduced.append(p)
+
+    # Filter ZigZag: pembalikan harus >= min_swing_pct baru dikonfirmasi jadi swing point
+    zigzag = []
+    for p in reduced:
+        if not zigzag:
+            zigzag.append(p)
+            continue
+        last = zigzag[-1]
+        if last[1] == p[1]:
+            if (p[1] == 'H' and p[2] > last[2]) or (p[1] == 'L' and p[2] < last[2]):
+                zigzag[-1] = p
+            continue
+        pct_change = abs(p[2] - last[2]) / last[2] * 100 if last[2] != 0 else 0
+        if pct_change >= min_swing_pct:
+            zigzag.append(p)
+        # kalau pembalikannya kekecilan -> dianggap noise, diabaikan (bukan swing baru)
 
     pullbacks = []
-    for j in range(len(seq) - 1):
-        if seq[j][1] == 'H' and seq[j + 1][1] == 'L':
-            h_idx, h_price = seq[j][0], seq[j][2]
-            l_idx, l_price = seq[j + 1][0], seq[j + 1][2]
+    for j in range(len(zigzag) - 1):
+        if zigzag[j][1] == 'H' and zigzag[j + 1][1] == 'L':
+            h_idx, h_price = zigzag[j][0], zigzag[j][2]
+            l_idx, l_price = zigzag[j + 1][0], zigzag[j + 1][2]
             if h_price <= 0:
                 continue
             pct = (h_price - l_price) / h_price * 100
             avg_vol = vols[h_idx:l_idx + 1].mean() if l_idx > h_idx else vols[h_idx]
             pullbacks.append({"pct": pct, "vol": avg_vol})
 
+    last_swing_low = None
+    for idx, typ, price in reversed(zigzag):
+        if typ == 'L':
+            last_swing_low = float(price)
+            break
+
     if len(pullbacks) < 2:
-        return {"score": 0, "label": "🔍 Kontraksi Blm Terbentuk", "n_pullback": len(pullbacks)}
+        return {
+            "score": 0,
+            "label": f"🔍 Kontraksi Blm Terbentuk ({len(pullbacks)}x pullback signifikan)",
+            "n_pullback": len(pullbacks),
+            "last_swing_low": last_swing_low,
+        }
 
     recent_pb = pullbacks[-4:]
     pairs = len(recent_pb) - 1
@@ -709,12 +737,12 @@ def detect_vcp_contraction(data, lookback=90, pivot_window=3):
 
     score = round(((price_shrink / pairs) * 0.6 + (vol_shrink / pairs) * 0.4) * 100, 1)
     if score >= 70:
-        label = f"✅ VCP Kuat ({len(recent_pb)}x pullback mengecil)"
+        label = f"✅ VCP Kuat ({len(recent_pb)}x pullback signifikan, mengecil)"
     elif score >= 40:
-        label = f"🟡 VCP Sedang ({len(recent_pb)}x pullback)"
+        label = f"🟡 VCP Sedang ({len(recent_pb)}x pullback signifikan)"
     else:
-        label = f"❌ Blm Kontraksi ({len(recent_pb)}x pullback)"
-    return {"score": score, "label": label, "n_pullback": len(recent_pb)}
+        label = f"❌ Blm Kontraksi ({len(recent_pb)}x pullback signifikan)"
+    return {"score": score, "label": label, "n_pullback": len(recent_pb), "last_swing_low": last_swing_low}
 
 
 def get_market_stage(data, slope_lookback=20, cycle_lookback=120):
@@ -809,9 +837,22 @@ def check_breakout_volume(data, lookback=10, resistance_window=20, vol_mult_thre
         return f"⚠️ Breakout Vol {ratio:.1f}x (Rawan Fakeout)", 30
 
 
-def get_invalidation_level(data, lookback=30):
-    """Level harga di mana setup dianggap batal (low konsolidasi terdekat) -- kesiapan
-    entry secara praktis, bukan identifikasi pola."""
+def get_invalidation_level(data, vcp_last_swing_low=None, lookback=30, max_dist_pct=25.0):
+    """Level harga di mana setup dianggap batal -- kesiapan entry secara praktis.
+    Prioritas: swing low terakhir dari struktur ZigZag/VCP yang sudah dikonfirmasi
+    (lebih relevan ke bentuk konsolidasi yang beneran terdeteksi). Kalau swing low itu
+    tidak tersedia, di atas harga sekarang, atau kejauhan (>max_dist_pct% dari Close --
+    biasanya tanda ambil low dari sebelum rally, bukan dari base saat ini), fallback ke
+    low N-bar terakhir seperti sebelumnya."""
+    if len(data) == 0:
+        return None
+    close = float(data['Close'].iloc[-1])
+
+    if vcp_last_swing_low is not None and vcp_last_swing_low < close:
+        dist_pct = (close - vcp_last_swing_low) / close * 100
+        if dist_pct <= max_dist_pct:
+            return round(float(vcp_last_swing_low), 2)
+
     if len(data) < lookback:
         return None
     return round(float(data['Low'].tail(lookback).min()), 2)
@@ -1490,7 +1531,7 @@ if start_button:
 
                         breakout_label, breakout_score_val = check_breakout_volume(data)
 
-                        inv_level = get_invalidation_level(data)
+                        inv_level = get_invalidation_level(data, vcp_last_swing_low=vcp_result.get("last_swing_low"))
                         invalidasi_level = inv_level if inv_level is not None else "-"
                     except Exception:
                         # Kalau ada error di analisis kualitas setup (mis. data IHSG
