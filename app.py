@@ -790,10 +790,19 @@ def get_relative_strength_vs_ihsg(stock_data, ihsg_data, period=20):
     ihsg_lemah = ("Rusak" in ihsg_struktur) or ("Volatil" in ihsg_struktur)
     saham_kuat = ("Bagus" in stock_struktur) or ("Konsolidasi" in stock_struktur)
 
+    # [DIUBAH] Sebelumnya semua outperform > 0 dapat skor flat 75, tanpa peduli
+    # besarnya. Temuan empiris: SWID gagal breakout meski outperform IHSG +22.1%
+    # (paling ekstrem di seluruh screening) -- outperform sebesar itu justru sinyal
+    # saham 'sudah kepanasan' duluan (rawan profit taking), bukan makin bagus makin
+    # tinggi. Sekarang skornya naik proporsional sampai +15%, lalu dipotong balik
+    # kalau kelewat ekstrem.
     if ihsg_lemah and saham_kuat:
         return f"💪 Kuat saat IHSG Lemah ({outperform:+.1f}%)", 100
+    elif outperform > 15:
+        return f"⚠️ Outperform Ekstrem ({outperform:+.1f}%, waspada sudah kepanasan)", 35
     elif outperform > 0:
-        return f"📈 Outperform IHSG ({outperform:+.1f}%)", 75
+        score = 60 + min(outperform, 15) / 15 * 30  # 0% -> 60, 15% -> 90
+        return f"📈 Outperform IHSG ({outperform:+.1f}%)", round(score, 1)
     elif outperform > -3:
         return f"➖ Sejalan IHSG ({outperform:+.1f}%)", 50
     else:
@@ -904,6 +913,37 @@ def detect_ma_dynamics(data, tight_threshold=0.05, wide_threshold=0.08, stabilit
     }
 
 
+def get_squeeze_extension_score(data, tight_pct=3.0, blown_pct=10.0):
+    """[TAMBAHAN] Ukur seberapa jauh Close sudah lari dari MA20 (pusat cluster MA
+    rapat/melilit). Temuan empiris (screening 13 Aug 2026, 9 naik vs 2 gagal): SWID gagal
+    padahal skor & VCP-nya bagus karena Close sudah +10.3% di atas MA20 saat terdeteksi --
+    sudah 'kepanasan' duluan sebelum breakout dicoba, rawan profit taking. Saham yang naik
+    rata-rata masih dekat cluster-nya (Close-MA20 sekitar 1-8%). Skor ini KHUSUS relevan
+    untuk setup MA Rapat Up/Melilit -- makin dekat Close ke MA20 saat rapat, makin 'segar'
+    setupnya; makin jauh, makin besar risiko sudah telat masuk / mean reversion."""
+    if 'MA20' not in data.columns or pd.isna(data['MA20'].iloc[-1]) or data['MA20'].iloc[-1] == 0:
+        return None, 50.0
+    close = float(data['Close'].iloc[-1])
+    ma20 = float(data['MA20'].iloc[-1])
+    ext_pct = round((close - ma20) / ma20 * 100, 2)
+
+    if ext_pct <= tight_pct:
+        score = 100.0
+    elif ext_pct >= blown_pct:
+        score = 0.0
+    else:
+        score = round(100 * (blown_pct - ext_pct) / (blown_pct - tight_pct), 1)
+
+    if ext_pct <= tight_pct:
+        label = f"✅ Masih Dekat MA20 ({ext_pct:+.1f}%)"
+    elif ext_pct < blown_pct:
+        label = f"🟡 Mulai Menjauh dr MA20 ({ext_pct:+.1f}%)"
+    else:
+        label = f"🔴 Sudah Kepanasan dr MA20 ({ext_pct:+.1f}%, rawan mean reversion)"
+
+    return label, score
+
+
 def get_ma_major_position(data, near_threshold_pct=2.0):
     """Cek apakah cluster MA yang rapat ini kebetulan nempel di MA50/100/200 (level
     psikologis yang lebih dipercaya banyak trader/institusi) atau ngambang di kekosongan."""
@@ -984,9 +1024,15 @@ def count_failed_consolidations(data, lookback_bars=130, min_episode_len=3, brea
 
 def calc_setup_score(vcp_score, rs_score, vol_dry_status, shakeout_score, bandar_status, breakout_score,
                       stage_mult, spread_score=50.0, stability_score=50.0, squeeze_score=50.0,
-                      ma_major_score=50.0, failed_cons_score=50.0):
+                      ma_major_score=50.0, failed_cons_score=50.0, extension_score=50.0):
     """Gabungkan semua komponen jadi 1 skor 0-100. Stage Analysis dipakai sebagai
-    MULTIPLIER (bukan additive) di akhir -- lihat alasannya di get_market_stage()."""
+    MULTIPLIER (bukan additive) di akhir -- lihat alasannya di get_market_stage().
+
+    [DIUBAH, khusus konteks MA Rapat/Melilit] Tambah komponen `extension_score`
+    (jarak Close ke MA20 -- lihat get_squeeze_extension_score) berbobot 0.07, karena
+    sebelumnya tidak ada satupun komponen yang menangkap 'sudah kepanasan dari cluster
+    rapat'. Bobotnya diambil dari squeeze/stability/shakeout yang secara empiris kurang
+    membedakan naik vs gagal, supaya total bobot tetap 1.0."""
     vol_dry_map = {"AKUMULASI": 100, "ASCENSION": 90, "NO POLA": 50, "DISTRIBUSI": 10, "MARKDOWN": 0, "-": 50}
     vol_dry_score = vol_dry_map.get(vol_dry_status, 50)
 
@@ -1001,15 +1047,16 @@ def calc_setup_score(vcp_score, rs_score, vol_dry_status, shakeout_score, bandar
     raw = (
         vcp_score * 0.15 +
         spread_score * 0.08 +
-        stability_score * 0.07 +
-        squeeze_score * 0.05 +
+        stability_score * 0.05 +       # was 0.07
+        squeeze_score * 0.02 +         # was 0.05
         ma_major_score * 0.08 +
         failed_cons_score * 0.10 +
         rs_score * 0.15 +
         vol_dry_score * 0.10 +
-        shakeout_score * 0.05 +
+        shakeout_score * 0.03 +        # was 0.05
         bandar_score * 0.10 +
-        breakout_component * 0.07
+        breakout_component * 0.07 +
+        extension_score * 0.07         # [BARU]
     )
     return round(min(100, max(0, raw * stage_mult)), 1)
 
@@ -1653,6 +1700,7 @@ if start_button:
                 squeeze_label, squeeze_score_val = "-", 50
                 ma_major_label, ma_major_score_val = "-", 50
                 failed_cons_label, failed_cons_score_val = "-", 50
+                extension_label, extension_score_val = "-", 50  # [BARU]
 
                 if cek_kualitas_setup:
                     try:
@@ -1679,6 +1727,9 @@ if start_button:
                         ma_major_label, ma_major_score_val = get_ma_major_position(data)
 
                         failed_cons_label, failed_cons_score_val = count_failed_consolidations(data)
+
+                        ext_label_raw, extension_score_val = get_squeeze_extension_score(data)  # [BARU]
+                        extension_label = ext_label_raw if ext_label_raw is not None else "-"
                     except Exception:
                         # Kalau ada error di analisis kualitas setup (mis. data IHSG
                         # bermasalah), JANGAN sampai gugurkan seluruh baris saham ini --
@@ -1694,6 +1745,7 @@ if start_button:
                         squeeze_label, squeeze_score_val = "⚠️ Error", 50
                         ma_major_label, ma_major_score_val = "⚠️ Error", 50
                         failed_cons_label, failed_cons_score_val = "⚠️ Error", 50
+                        extension_label, extension_score_val = "⚠️ Error", 50  # [BARU]
 
                 # ================= TANGGAL & CHANGE DIVERGENCE MACD (FIXED) =================
                 tanggal_buldiv = "-"
@@ -1839,6 +1891,7 @@ if start_button:
                                 squeeze_score=squeeze_score_val,
                                 ma_major_score=ma_major_score_val,
                                 failed_cons_score=failed_cons_score_val,
+                                extension_score=extension_score_val,
                             )
                         except Exception:
                             setup_score_val = np.nan
@@ -1869,6 +1922,7 @@ if start_button:
                         "Fresh Squeeze": squeeze_label,
                         "Posisi vs MA Mayor": ma_major_label,
                         "Riwayat Gagal Rapat": failed_cons_label,
+                        "Ekstensi vs MA20": extension_label,
                         "Stage Market (MA200)": stage_label,
                         "RS vs IHSG": rs_label,
                         "Shakeout/Spring": shakeout_label,
