@@ -944,6 +944,74 @@ def get_squeeze_extension_score(data, tight_pct=3.0, blown_pct=10.0):
     return label, score
 
 
+def get_momentum_divergence_score(data, last_candle_type="", lookback=8):
+    """[TAMBAHAN] Deteksi bearish momentum divergence: harga masih naik/dekat tertinggi
+    N bar terakhir, tapi RSI & MACD histogram-nya justru melandai/turun. Ini persis pola
+    yang kelihatan di chart TradingView SWID (StochRSI & RSI berstatus 'BULLISH MELEMAH'
+    padahal harga masih di atas semua MA) tepat sebelum candle Dark Cloud Cover muncul.
+    Sebelumnya RSI/MACD dihitung tapi cuma dipakai untuk cari divergence BULLISH (buat
+    nangkep pembalikan di bottom) -- tidak ada satupun sinyal yang mengecek pelemahan
+    momentum di TOP. Juga dicek: candle terakhir apakah pola reversal bearish (Shooting
+    Star/Hanging Man/Marubozu Bearish) -- kalau ya, tambahan penalti karena itu sering
+    muncul tepat di titik distribusi (mirip label 'GUYUR' di indikator TradingView user)."""
+    if len(data) < lookback + 1 or not all(c in data.columns for c in ["RSI", "MACD2_HIST", "Close"]):
+        return "-", 50.0
+
+    close = data["Close"].iloc[-lookback:]
+    rsi = data["RSI"].iloc[-lookback:]
+    macd_hist = data["MACD2_HIST"].iloc[-lookback:]
+    if close.isna().any() or rsi.isna().any() or macd_hist.isna().any():
+        return "-", 50.0
+
+    def slope(series):
+        x = np.arange(len(series))
+        return np.polyfit(x, series.values, 1)[0]
+
+    price_slope_pct = slope(close) / close.mean() * 100
+    rsi_slope = slope(rsi)
+    macd_slope = slope(macd_hist)
+
+    price_naik = price_slope_pct > 0.1
+    momentum_melemah = rsi_slope < 0 and macd_slope < 0
+
+    candle_bearish = last_candle_type in ("Bearish Shooting Star", "Bearish Hanging Man", "Strong Bearish (Marubozu)")
+
+    if price_naik and momentum_melemah and candle_bearish:
+        return f"🔴 Divergence + Candle Bearish (RSI/MACD melemah, {last_candle_type})", 5.0
+    elif price_naik and momentum_melemah:
+        return "🔴 Bearish Divergence (harga naik, RSI & MACD melandai)", 20.0
+    elif price_naik and candle_bearish:
+        return f"🟠 Candle Reversal di Dekat High ({last_candle_type})", 35.0
+    elif price_naik:
+        return "✅ Momentum Sejalan (RSI/MACD ikut naik)", 85.0
+    else:
+        return "➖ Netral", 55.0
+
+
+def get_volume_dryness_score(data, lookback=5):
+    """[BARU] Cek apakah volume rata-rata N bar terakhir (saat kondisi MA rapat) kering
+    dibanding rata-rata 20 bar-nya sendiri. Beda dari check_breakout_volume() yang cuma
+    cek volume PAS breakout terjadi -- ini cek partisipasi SELAMA fase rapatnya. Rally
+    menuju rapat yang volume-nya kering kurang meyakinkan sebagai akumulasi riil, gampang
+    dibalik begitu ada sedikit jual (rendah likuiditas = rentan)."""
+    if 'Vol_MA20' not in data.columns or len(data) < lookback + 20:
+        return "-", 50.0
+    vol_ma20 = data['Vol_MA20'].iloc[-1]
+    if pd.isna(vol_ma20) or vol_ma20 == 0:
+        return "-", 50.0
+    recent_vol_avg = data['Volume'].tail(lookback).mean()
+    ratio = round(recent_vol_avg / vol_ma20, 2)
+
+    if ratio >= 1.1:
+        return f"✅ Vol Ramai ({ratio:.2f}x avg)", 90.0
+    elif ratio >= 0.8:
+        return f"➖ Vol Normal ({ratio:.2f}x avg)", 55.0
+    elif ratio >= 0.5:
+        return f"🟡 Vol Mulai Kering ({ratio:.2f}x avg)", 30.0
+    else:
+        return f"🔴 Vol Kering ({ratio:.2f}x avg, partisipasi tipis)", 10.0
+
+
 def get_ma_major_position(data, near_threshold_pct=2.0):
     """Cek apakah cluster MA yang rapat ini kebetulan nempel di MA50/100/200 (level
     psikologis yang lebih dipercaya banyak trader/institusi) atau ngambang di kekosongan."""
@@ -1024,15 +1092,26 @@ def count_failed_consolidations(data, lookback_bars=130, min_episode_len=3, brea
 
 def calc_setup_score(vcp_score, rs_score, vol_dry_status, shakeout_score, bandar_status, breakout_score,
                       stage_mult, spread_score=50.0, stability_score=50.0, squeeze_score=50.0,
-                      ma_major_score=50.0, failed_cons_score=50.0, extension_score=50.0):
+                      ma_major_score=50.0, failed_cons_score=50.0, extension_score=50.0,
+                      volume_dryness_score=50.0, momentum_divergence_score=50.0):
     """Gabungkan semua komponen jadi 1 skor 0-100. Stage Analysis dipakai sebagai
     MULTIPLIER (bukan additive) di akhir -- lihat alasannya di get_market_stage().
 
-    [DIUBAH, khusus konteks MA Rapat/Melilit] Tambah komponen `extension_score`
-    (jarak Close ke MA20 -- lihat get_squeeze_extension_score) berbobot 0.07, karena
-    sebelumnya tidak ada satupun komponen yang menangkap 'sudah kepanasan dari cluster
-    rapat'. Bobotnya diambil dari squeeze/stability/shakeout yang secara empiris kurang
-    membedakan naik vs gagal, supaya total bobot tetap 1.0."""
+    [DIUBAH lagi] Tambah `volume_dryness_score` (partisipasi volume selama fase rapat,
+    lihat get_volume_dryness_score) berbobot 0.05, bobot diambil dari vol_dry (0.10->0.07)
+    yang konsepnya berdekatan, dan shakeout (0.03->0.01) yang bobotnya paling kecil urgensinya.
+
+    [DIUBAH lagi] Tambah `momentum_divergence_score` (lihat get_momentum_divergence_score)
+    berbobot 0.05 -- nangkep pola "harga masih naik tapi RSI/MACD melemah + candle reversal"
+    yang kelihatan persis di chart TradingView SWID user (RSI/StochRSI 'BULLISH MELEMAH',
+    candle Dark Cloud Cover di dekat high). Bobot diambil dari bandar_score (0.10->0.07)
+    dan ma_major_score (0.08->0.06) yang secara empiris paling lemah daya pembedanya.
+
+    Juga: bandar_score sekarang DIKOREKSI kalau nggak konsisten dengan pola volume --
+    kasus nyata SWID (screening 13 Aug 2026): Status Broksum bilang AKUMULASI tapi
+    Vol 5 Bar Mode bilang NO POLA. Broker summary AKUMULASI yang tidak didukung pola
+    volume harga yang sama kurang meyakinkan (bisa cuma 1-2 broker, bukan partisipasi
+    luas) -- skornya dipotong separuh kalau terjadi mismatch begini."""
     vol_dry_map = {"AKUMULASI": 100, "ASCENSION": 90, "NO POLA": 50, "DISTRIBUSI": 10, "MARKDOWN": 0, "-": 50}
     vol_dry_score = vol_dry_map.get(vol_dry_status, 50)
 
@@ -1042,21 +1121,27 @@ def calc_setup_score(vcp_score, rs_score, vol_dry_status, shakeout_score, bandar
         elif "DISTRIBUSI" in bandar_status: bandar_score = 10
         elif "NETRAL" in bandar_status: bandar_score = 50
 
+    # [BARU] Koreksi konsistensi broksum vs pola volume
+    if bandar_score == 100 and vol_dry_status not in ("AKUMULASI", "ASCENSION"):
+        bandar_score = 50  # broksum akumulasi tapi tak didukung pola volume -> tak sepenuhnya dipercaya
+
     breakout_component = breakout_score if breakout_score is not None else 50  # netral kalau belum breakout
 
     raw = (
         vcp_score * 0.15 +
         spread_score * 0.08 +
-        stability_score * 0.05 +       # was 0.07
-        squeeze_score * 0.02 +         # was 0.05
-        ma_major_score * 0.08 +
+        stability_score * 0.05 +
+        squeeze_score * 0.02 +
+        ma_major_score * 0.06 +         # was 0.08
         failed_cons_score * 0.10 +
         rs_score * 0.15 +
-        vol_dry_score * 0.10 +
-        shakeout_score * 0.03 +        # was 0.05
-        bandar_score * 0.10 +
+        vol_dry_score * 0.07 +          # was 0.10
+        shakeout_score * 0.01 +         # was 0.03
+        bandar_score * 0.07 +           # was 0.10
         breakout_component * 0.07 +
-        extension_score * 0.07         # [BARU]
+        extension_score * 0.07 +
+        volume_dryness_score * 0.05 +   # [BARU]
+        momentum_divergence_score * 0.05  # [BARU]
     )
     return round(min(100, max(0, raw * stage_mult)), 1)
 
@@ -1701,6 +1786,7 @@ if start_button:
                 ma_major_label, ma_major_score_val = "-", 50
                 failed_cons_label, failed_cons_score_val = "-", 50
                 extension_label, extension_score_val = "-", 50  # [BARU]
+                vol_dryness_label, vol_dryness_score_val = "-", 50  # [BARU]
 
                 if cek_kualitas_setup:
                     try:
@@ -1730,6 +1816,8 @@ if start_button:
 
                         ext_label_raw, extension_score_val = get_squeeze_extension_score(data)  # [BARU]
                         extension_label = ext_label_raw if ext_label_raw is not None else "-"
+
+                        vol_dryness_label, vol_dryness_score_val = get_volume_dryness_score(data)  # [BARU]
                     except Exception:
                         # Kalau ada error di analisis kualitas setup (mis. data IHSG
                         # bermasalah), JANGAN sampai gugurkan seluruh baris saham ini --
@@ -1746,6 +1834,7 @@ if start_button:
                         ma_major_label, ma_major_score_val = "⚠️ Error", 50
                         failed_cons_label, failed_cons_score_val = "⚠️ Error", 50
                         extension_label, extension_score_val = "⚠️ Error", 50  # [BARU]
+                        vol_dryness_label, vol_dryness_score_val = "⚠️ Error", 50  # [BARU]
 
                 # ================= TANGGAL & CHANGE DIVERGENCE MACD (FIXED) =================
                 tanggal_buldiv = "-"
@@ -1892,6 +1981,7 @@ if start_button:
                                 ma_major_score=ma_major_score_val,
                                 failed_cons_score=failed_cons_score_val,
                                 extension_score=extension_score_val,
+                                volume_dryness_score=vol_dryness_score_val,
                             )
                         except Exception:
                             setup_score_val = np.nan
@@ -1923,6 +2013,7 @@ if start_button:
                         "Posisi vs MA Mayor": ma_major_label,
                         "Riwayat Gagal Rapat": failed_cons_label,
                         "Ekstensi vs MA20": extension_label,
+                        "Partisipasi Vol (Rapat)": vol_dryness_label,
                         "Stage Market (MA200)": stage_label,
                         "RS vs IHSG": rs_label,
                         "Shakeout/Spring": shakeout_label,
