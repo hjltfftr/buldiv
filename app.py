@@ -7,15 +7,6 @@ import io
 import warnings
 import time
 import random
-from datetime import datetime, timedelta, dateimport streamlit as st
-import yfinance as yf
-import pandas as pd
-import numpy as np
-import requests
-import io
-import warnings
-import time
-import random
 from datetime import datetime, timedelta, date
 from bs4 import BeautifulSoup
 
