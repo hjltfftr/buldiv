@@ -1225,15 +1225,30 @@ with st.sidebar.expander("🎯 Indikator Tren & Struktur Harga", expanded=False)
 
 with st.sidebar.expander("🌪️ MA Rapat & Melilit", expanded=False):
     filter_melilit = st.checkbox("🌪️ MA Melilit (Bertumpuk)", value=False)
+
+    # Pilihan tingkat ketat HANYA muncul begitu MA Melilit dicentang -- langsung
+    # menempel di bawah checkbox-nya supaya jelas konteksnya untuk filter ini.
+    ma_strictness_label_melilit = "Moderat"
+    if filter_melilit:
+        ma_strictness_label_melilit = st.selectbox(
+            "↳ 🎚️ Tingkat Ketat Struktur MA:",
+            list(MA_STRICTNESS_MAP.keys()),
+            index=1,  # default: Moderat
+            key="strictness_melilit",
+        )
+
+    st.markdown("")
     filter_rapat_up = st.checkbox("📏 MA Rapat Up", value=False)
 
-    st.markdown("---")
-    ma_strictness_label = st.selectbox(
-        "🎚️ Tingkat Ketat Struktur MA (RAPAT UP/DOWN):",
-        list(MA_STRICTNESS_MAP.keys()),
-        index=1,  # default: Moderat
-    )
-    ma_min_pairs_ok = MA_STRICTNESS_MAP[ma_strictness_label]
+    # Sama, muncul begitu MA Rapat Up dicentang.
+    ma_strictness_label_rapatup = "Moderat"
+    if filter_rapat_up:
+        ma_strictness_label_rapatup = st.selectbox(
+            "↳ 🎚️ Tingkat Ketat Struktur MA:",
+            list(MA_STRICTNESS_MAP.keys()),
+            index=1,  # default: Moderat
+            key="strictness_rapatup",
+        )
 
     STRICTNESS_INFO = {
         "Ketat": "🔒 **Ketat** — wajib ketiga pasangan MA3≥MA5, MA5≥MA10, MA10≥MA20 (semuanya) berurutan rapi. "
@@ -1243,8 +1258,13 @@ with st.sidebar.expander("🌪️ MA Rapat & Melilit", expanded=False):
         "Longgar": "🌊 **Longgar** — cukup 1 dari 3 pasangan MA berurutan (praktis hanya cek MA5 vs MA20 + Close vs MA20). "
                    "Paling banyak saham lolos, tapi lebih rawan sinyal palsu/struktur MA yang belum benar-benar rapi.",
     }
-    st.caption(STRICTNESS_INFO[ma_strictness_label])
-    st.caption("Keempat MA (MA3, MA5, MA10, MA20) tetap selalu dipakai di semua tingkat — yang berubah cuma seberapa banyak pasangan MA yang wajib berurutan rapi.")
+    if filter_melilit or filter_rapat_up:
+        # Kalau dua-duanya dicentang tapi pilih level beda, kasih tau dipakai yang mana per filter.
+        if filter_melilit:
+            st.caption(f"🌪️ MA Melilit → {STRICTNESS_INFO[ma_strictness_label_melilit]}")
+        if filter_rapat_up and (not filter_melilit or ma_strictness_label_rapatup != ma_strictness_label_melilit):
+            st.caption(f"📏 MA Rapat Up → {STRICTNESS_INFO[ma_strictness_label_rapatup]}")
+        st.caption("Keempat MA (MA3, MA5, MA10, MA20) tetap selalu dipakai di semua tingkat — yang berubah cuma seberapa banyak pasangan MA yang wajib berurutan rapi.")
 
     st.markdown("---")
     cek_kualitas_setup = st.checkbox(
@@ -1292,8 +1312,8 @@ filter_catalog = [
     (filter_bounce_ma20, "🏓 Pantulan MA20"),
     (filter_bounce_ma50, "🏓 Pantulan MA50"),
     (filter_adx, "🚀 ADX Trend Bullish"),
-    (filter_melilit, f"🌪️ MA Melilit ({ma_strictness_label})"),
-    (filter_rapat_up, f"📏 MA Rapat Up ({ma_strictness_label})"),
+    (filter_melilit, f"🌪️ MA Melilit ({ma_strictness_label_melilit})"),
+    (filter_rapat_up, f"📏 MA Rapat Up ({ma_strictness_label_rapatup})"),
     (filter_dekat_ma20, "🎯 Dekat MA20"),
     (filter_dekat_ma50, "🎯 Dekat MA50"),
     (filter_dekat_ma100, "🎯 Dekat MA100"),
@@ -1721,13 +1741,27 @@ if start_button:
                             matched_signals.append(f"🎯 Dkt {m_name}")
                             status_dekat_ma.append(f"{'Atas' if close >= m_val else 'Bawah'} {m_name} ({jarak_pct:.2f}%)")
 
-                s_state = get_ma_state(
-                    close,
-                    [float(data["MA3"].iloc[-1]), float(data["MA5"].iloc[-1]), float(data["MA10"].iloc[-1]), ma20_now],
-                    min_pairs_ok=ma_min_pairs_ok,
-                )
-                if filter_melilit and s_state == "MELILIT": matched_signals.append(f"🌪️ MA MELILIT ({ma_strictness_label})")
-                if filter_rapat_up and s_state == "RAPAT UP" and close > ma20_now: matched_signals.append(f"📏 MA RAPAT UP ({ma_strictness_label})")
+                ma_list_now = [float(data["MA3"].iloc[-1]), float(data["MA5"].iloc[-1]), float(data["MA10"].iloc[-1]), ma20_now]
+
+                # Status MA dihitung terpisah untuk tiap filter karena tingkat ketatnya
+                # bisa beda (mis. MA Melilit pakai Longgar, MA Rapat Up pakai Ketat).
+                s_state_melilit = get_ma_state(close, ma_list_now, min_pairs_ok=MA_STRICTNESS_MAP[ma_strictness_label_melilit])
+                s_state_rapatup = get_ma_state(close, ma_list_now, min_pairs_ok=MA_STRICTNESS_MAP[ma_strictness_label_rapatup])
+
+                if filter_melilit and s_state_melilit == "MELILIT": matched_signals.append(f"🌪️ MA MELILIT ({ma_strictness_label_melilit})")
+                if filter_rapat_up and s_state_rapatup == "RAPAT UP" and close > ma20_now: matched_signals.append(f"📏 MA RAPAT UP ({ma_strictness_label_rapatup})")
+
+                # Untuk kolom tampilan "S.State", pakai hasil dari filter yang aktif
+                # (kalau dua-duanya aktif, prioritaskan yang match dulu; kalau tidak ada
+                # yang match, tampilkan status dari MA Rapat Up sebagai default).
+                if filter_melilit and s_state_melilit == "MELILIT":
+                    s_state = s_state_melilit
+                elif filter_rapat_up and s_state_rapatup == "RAPAT UP":
+                    s_state = s_state_rapatup
+                elif filter_melilit:
+                    s_state = s_state_melilit
+                else:
+                    s_state = s_state_rapatup
                 if filter_adx and data['ADX'].iloc[-1] > 20 and data['+DI'].iloc[-1] > data['-DI'].iloc[-1]: matched_signals.append("🚀 ADX BULL")
 
                 stat_vol_5, stat_vol_10, stat_vol_20 = get_volume_status(data, 5, vol_mult), get_volume_status(data, 10, vol_mult), get_volume_status(data, 20, vol_mult)
@@ -1802,7 +1836,8 @@ if start_button:
                         "Close": close,
                         "MA20": round(ma20_now, 2) if not pd.isna(ma20_now) else "-",
                         "S.State": s_state,
-                        "Tingkat Ketat MA": ma_strictness_label,
+                        "Tingkat Ketat MA (Melilit)": ma_strictness_label_melilit if filter_melilit else "-",
+                        "Tingkat Ketat MA (Rapat Up)": ma_strictness_label_rapatup if filter_rapat_up else "-",
                         "ADX": round(data['ADX'].iloc[-1], 2),
                     })
             except Exception as e:
@@ -1818,12 +1853,19 @@ if start_button:
         else:
             df_hasil = df_hasil.sort_values(by="Saham").reset_index(drop=True)
 
+    strictness_note_parts = []
+    if filter_melilit:
+        strictness_note_parts.append(f"Melilit={ma_strictness_label_melilit}")
+    if filter_rapat_up:
+        strictness_note_parts.append(f"Rapat Up={ma_strictness_label_rapatup}")
+    strictness_note = ", ".join(strictness_note_parts)
+
     st.session_state.df_hasil = df_hasil
     st.session_state.screening_meta = {
         "target_date": target_date,
         "tf_choice": tf_choice,
         "cek_kualitas_setup": cek_kualitas_setup,
-        "ma_strictness_label": ma_strictness_label,
+        "strictness_note": strictness_note,
     }
 
 if st.session_state.df_hasil is not None:
@@ -1831,10 +1873,11 @@ if st.session_state.df_hasil is not None:
     meta = st.session_state.screening_meta
     disp_date = meta.get("target_date", target_date)
     disp_tf = meta.get("tf_choice", tf_choice)
-    disp_strictness = meta.get("ma_strictness_label", ma_strictness_label)
+    disp_strictness_note = meta.get("strictness_note", "")
+    strictness_suffix = f" (Tingkat Ketat MA: {disp_strictness_note})" if disp_strictness_note else ""
 
     if not df_hasil.empty:
-        st.success(f"🎉 Pencarian Selesai! Ditemukan **{len(df_hasil)}** saham yang sesuai dengan kriteria pada tanggal **{disp_date.strftime('%d %b %Y')}** (Tingkat Ketat MA: **{disp_strictness}**).")
+        st.success(f"🎉 Pencarian Selesai! Ditemukan **{len(df_hasil)}** saham yang sesuai dengan kriteria pada tanggal **{disp_date.strftime('%d %b %Y')}**{strictness_suffix}.")
 
         st.dataframe(df_hasil, use_container_width=True)
 
@@ -1853,4 +1896,4 @@ if st.session_state.df_hasil is not None:
                 key="download_hasil_screening_btn"
             )
     else:
-        st.warning(f"😔 Tidak ada saham yang memenuhi kriteria pada timeframe {disp_tf} untuk tanggal {disp_date.strftime('%d %b %Y')} (Tingkat Ketat MA: {ma_strictness_label}).")
+        st.warning(f"😔 Tidak ada saham yang memenuhi kriteria pada timeframe {disp_tf} untuk tanggal {disp_date.strftime('%d %b %Y')}{strictness_suffix}.")
