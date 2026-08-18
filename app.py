@@ -1204,8 +1204,21 @@ with st.sidebar.expander("💥 Big Volume Kill Trend", expanded=False):
     kt_min_downtrend_pct = st.slider("↳ Minimal Penurunan Harga Selama Lookback (%):", -30.0, 0.0, -3.0, 0.5)
 
 with st.sidebar.expander("📈 MACD, RSI & Stochastic RSI", expanded=False):
-    filter_early_gc = st.checkbox("⚡ MACD Early GC (8,21,5)", value=False)
-    filter_gc = st.checkbox("✅ MACD Fase GC (8,21,5)", value=False)
+    filter_early_gc = st.checkbox("⚡ MACD Early GC", value=False)
+    filter_gc = st.checkbox("✅ MACD Fase GC", value=False)
+    if filter_early_gc or filter_gc:
+        macd_gc_param = st.selectbox(
+            "↳ Parameter MACD:",
+            ["8, 21, 5 (Cepat)", "12, 26, 9 (Standar)"],
+            index=0,
+            key="macd_gc_param",
+        )
+        st.caption(
+            "Parameter 8,21,5 lebih cepat bereaksi (lebih banyak sinyal, lebih rawan noise). "
+            "Parameter 12,26,9 lebih lambat/standar (sinyal lebih sedikit, biasanya lebih tervalidasi)."
+        )
+    else:
+        macd_gc_param = "8, 21, 5 (Cepat)"
     st.markdown("---")
     filter_rsi_gc = st.checkbox("📈 RSI Golden Cross (vs SMA 14)", value=False)
     filter_rsi_oversold = st.checkbox("↳ Wajib GC di Oversold (RSI < 30)", value=False)
@@ -1301,8 +1314,8 @@ filter_catalog = [
     (filter_cci_div, "📊 CCI Bullish Divergence"),
     (filter_stochrsi_div, "〰️ Hybrid Stoch RSI Divergence"),
     (filter_killtrend, "💥 Big Volume Kill Trend"),
-    (filter_early_gc, "⚡ MACD Early GC"),
-    (filter_gc, "✅ MACD Fase GC"),
+    (filter_early_gc, f"⚡ MACD Early GC ({macd_gc_param.split(' (')[0]})"),
+    (filter_gc, f"✅ MACD Fase GC ({macd_gc_param.split(' (')[0]})"),
     (filter_rsi_gc, "📈 RSI Golden Cross"),
     (filter_stoch_early_gc, "⚡ Stoch RSI Early GC"),
     (filter_stoch_gc, "✅ Stoch RSI Fase GC"),
@@ -1705,8 +1718,13 @@ if start_button:
                 if filter_uptrend and is_uptrend: matched_signals.append("📈 UPTREND")
                 if filter_struktur and "Bagus Sekali" in struktur_harga: matched_signals.append("🟢 STRUKTUR HH+HL")
 
-                if filter_early_gc and (data["MACD1_LINE"].iloc[-2] <= data["MACD1_SIG"].iloc[-2]) and (data["MACD1_LINE"].iloc[-1] > data["MACD1_SIG"].iloc[-1]): matched_signals.append("⚡ MACD EARLY GC")
-                if filter_gc and data["MACD1_LINE"].iloc[-1] > data["MACD1_SIG"].iloc[-1]: matched_signals.append("✅ MACD GC")
+                # Pilih kolom MACD sesuai parameter yang dipilih di sidebar:
+                # "8, 21, 5" -> kolom MACD1_* (cepat), "12, 26, 9" -> kolom MACD2_* (standar)
+                macd_line_col, macd_sig_col = ("MACD1_LINE", "MACD1_SIG") if "8, 21, 5" in macd_gc_param else ("MACD2_LINE", "MACD2_SIG")
+                macd_gc_label = macd_gc_param.split(" (")[0]
+
+                if filter_early_gc and (data[macd_line_col].iloc[-2] <= data[macd_sig_col].iloc[-2]) and (data[macd_line_col].iloc[-1] > data[macd_sig_col].iloc[-1]): matched_signals.append(f"⚡ MACD EARLY GC ({macd_gc_label})")
+                if filter_gc and data[macd_line_col].iloc[-1] > data[macd_sig_col].iloc[-1]: matched_signals.append(f"✅ MACD GC ({macd_gc_label})")
 
                 if filter_rsi_gc:
                     is_rsi_cross = (data["RSI"].iloc[-2] <= data["RSI_SMA"].iloc[-2]) and (data["RSI"].iloc[-1] > data["RSI_SMA"].iloc[-1])
