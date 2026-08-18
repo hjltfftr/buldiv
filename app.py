@@ -142,22 +142,6 @@ def evaluate_price_structure(df, period=20):
 # =========================================
 # 🔥 FUNGSI DIVERGENCE (VERSI DIPERBAIKI)
 # =========================================
-# Perbaikan dibanding versi lama, disamakan dengan modul Pine Script
-# "MODUL DETEKSI DIVERGENCE (HYBRID CONFIRMATION v2 - FILTERED)":
-#
-#   1. Filter Tren (vs MA50)      -> Regular Bullish Div hanya valid saat close < MA50
-#   2. Filter Jarak Swing (gap)   -> swing yang terlalu dekat/jauh (noise) dibuang
-#   3. Sync Tolerance (bar-based) -> label STRONG hanya kalau pivot MACD cepat (8,21)
-#                                    dan pivot MACD standar (12,26) berdekatan SECARA
-#                                    BAR_INDEX, bukan cuma flag boolean seperti versi lama
-#   4. Filter Volume (opsional)   -> volume di pivot harus > SMA(volume, 20) untuk STRONG
-#   5. FIX TANGGAL DIVERGENCE     -> versi lama menyimpan tanggal di bar KONFIRMASI
-#                                    (saat histogram cross ke atas nol), padahal
-#                                    seharusnya tanggal SWING LOW (bar pivot) aktual,
-#                                    persis seperti Pine yang menggambar label di
-#                                    cur_b2 (bar pivot), bukan di bar crossover.
-#                                    Sekarang disimpan terpisah di kolom
-#                                    Hybrid_Div_PivotDate & Hybrid_Div_PivotClose.
 def check_hybrid_bullish_divergence(
     df,
     ma50_col="MA50",
@@ -192,19 +176,17 @@ def check_hybrid_bullish_divergence(
     h2 = df["MACD2_HIST"].values
     dates = df.index
 
-    # State tracking pivot MACD1 (cepat, 8/21/5)
     cur_p1 = cur_i1 = cur_b1 = None
     prv_p1 = prv_i1 = prv_b1 = None
     macd1_reg_ok, macd1_hid_ok = False, False
     macd1_reg_bar, macd1_hid_bar = None, None
 
-    # State tracking pivot MACD2 (standar, 12/26/9)
     cur_p2 = cur_i2 = cur_b2 = None
     prv_p2 = prv_i2 = prv_b2 = None
 
-    signals = [""] * n        # teks sinyal, disimpan di bar KONFIRMASI (i) — untuk screening
-    tags = [""] * n           # "FAST" / "STD" / "STRONG"
-    pivot_dates = [""] * n    # tanggal SWING LOW aktual (bar pivot) — untuk ditampilkan
+    signals = [""] * n
+    tags = [""] * n
+    pivot_dates = [""] * n
     pivot_close = [np.nan] * n
 
     def gap_ok(b1, b2):
@@ -218,14 +200,12 @@ def check_hybrid_bullish_divergence(
         h1_now, h1_prev = h1[i], h1[i - 1]
         h2_now, h2_prev = h2[i], h2[i - 1]
 
-        # Reset flag MACD1 saat MACD2 histogram baru masuk negatif (siklus baru)
         if h2_now < 0 and h2_prev >= 0:
             macd1_reg_ok, macd1_hid_ok = False, False
             macd1_reg_bar, macd1_hid_bar = None, None
 
         trend_ok_bull = (not use_trend_filter) or (not pd.isna(ma50_now) and close_now < ma50_now)
 
-        # ---- Tracking pivot MACD1 (cepat) selama histogram negatif ----
         if h1_now < 0:
             if cur_p1 is None or low_now < cur_p1:
                 cur_p1 = low_now
@@ -254,7 +234,6 @@ def check_hybrid_bullish_divergence(
             prv_p1, prv_i1, prv_b1 = cur_p1, cur_i1, cur_b1
             cur_p1, cur_i1, cur_b1 = None, None, None
 
-        # ---- Tracking pivot MACD2 (standar) selama histogram negatif ----
         if h2_now < 0:
             if cur_p2 is None or low_now < cur_p2:
                 cur_p2 = low_now
@@ -269,12 +248,10 @@ def check_hybrid_bullish_divergence(
                 is_reg = (cur_p2 < prv_p2) and (cur_i2 > prv_i2) and trend_ok_bull
                 is_hid = (cur_p2 > prv_p2) and (cur_i2 < prv_i2)
 
-                # Volume dicek DI BAR PIVOT (cur_b2), bukan di bar konfirmasi (i)
                 vol_ok = (not use_vol_filter) or (
                     not pd.isna(vol_sma_arr[cur_b2]) and vol_arr[cur_b2] > vol_sma_arr[cur_b2]
                 )
 
-                # Sinkronisasi bar_index pivot cepat vs standar (bukan cuma flag boolean)
                 reg_synced = (macd1_reg_ok and macd1_reg_bar is not None
                               and abs(macd1_reg_bar - cur_b2) <= sync_tolerance)
                 hid_synced = (macd1_hid_ok and macd1_hid_bar is not None
@@ -310,11 +287,6 @@ def check_hybrid_bullish_divergence(
 # =========================================
 # 📊 FUNGSI CCI BULLISH DIVERGENCE (BARU)
 # =========================================
-# Regular bullish divergence: harga bikin Low baru (lebih rendah dari pivot
-# sebelumnya) tapi CCI di pivot itu justru lebih tinggi (higher low) -> tanda
-# tekanan jual melemah meski harga masih turun. Pivot dilacak selama CCI
-# berada di area oversold (< oversold_level), lalu dikonfirmasi saat CCI
-# keluar (cross ke atas) dari area oversold tersebut.
 def check_cci_bullish_divergence(
     df,
     cci_period=20,
@@ -388,10 +360,6 @@ def check_cci_bullish_divergence(
 # =========================================
 # 〰️ FUNGSI HYBRID STOCH RSI BULLISH DIVERGENCE (BARU)
 # =========================================
-# Sama persis konsep Hybrid MACD Divergence di atas, tapi oscillator-nya
-# Stoch RSI: pivot CEPAT pakai parameter (5,3,3) dan pivot STANDAR pakai
-# (14,3,3). Kalau pivot cepat & standar "sinkron" (berdekatan secara bar)
-# -> label STRONG. Kalau cuma pivot standar yang valid -> label STD.
 def check_hybrid_stochrsi_bullish_divergence(
     df,
     rsi_period=14,
@@ -456,11 +424,9 @@ def check_hybrid_stochrsi_bullish_divergence(
 
         low_now = low_arr[i]
 
-        # Reset flag FAST saat STD baru masuk fase oversold baru
         if ks[i] < oversold_level and ks[i - 1] >= oversold_level:
             fast_ok, fast_bar = False, None
 
-        # ---- Tracking pivot FAST (5,3,3) ----
         if kf[i] < oversold_level:
             if cur_p1 is None or low_now < cur_p1:
                 cur_p1 = low_now
@@ -480,7 +446,6 @@ def check_hybrid_stochrsi_bullish_divergence(
             prv_p1, prv_k1, prv_b1 = cur_p1, cur_k1, cur_b1
             cur_p1, cur_k1, cur_b1 = None, None, None
 
-        # ---- Tracking pivot STD (14,3,3) ----
         if ks[i] < oversold_level:
             if cur_p2 is None or low_now < cur_p2:
                 cur_p2 = low_now
@@ -516,21 +481,6 @@ def check_hybrid_stochrsi_bullish_divergence(
 # =========================================
 # 💥 FUNGSI BIG VOLUME KILL TREND (BARU)
 # =========================================
-# Logika:
-#   1. DOWNTREND    -> harga turun (Close sekarang < Close N bar lalu, minimal
-#                       sekian %) selama `trend_lookback` bar terakhir sebelum
-#                       bar climax.
-#   2. CLIMAX BAR   -> bar dengan Volume >> rata-rata (Volume > vol_mult x
-#                       SMA(Volume, vol_sma_len)) DAN membuat Low terendah baru
-#                       dibanding `trend_lookback` bar sebelumnya (tanda capitulation
-#                       / penyerapan supply besar-besaran di titik bawah).
-#   3. KONFIRMASI   -> dalam `confirm_bars` bar setelah climax, harga Close
-#                       berhasil ditutup di atas High bar climax (bukti downtrend
-#                       benar-benar "terbunuh" dan reversal ke uptrend valid,
-#                       bukan sekadar bounce sesaat).
-# Sinyal dicatat di bar KONFIRMASI (agar bisa discreening seperti sinyal lain),
-# tapi tanggal & harga low climax disimpan terpisah di kolom KillTrend_Date /
-# KillTrend_Low untuk ditampilkan di tabel hasil.
 def check_big_volume_kill_trend(
     df,
     trend_lookback=10,
@@ -576,7 +526,6 @@ def check_big_volume_kill_trend(
             i += 1
             continue
 
-        # cari konfirmasi reversal: Close menembus ke atas High bar climax
         end_idx = min(i + confirm_bars, n - 1)
         confirm_at = None
         for j in range(i + 1, end_idx + 1):
@@ -588,7 +537,7 @@ def check_big_volume_kill_trend(
             signals[confirm_at] = "💥 BIG VOLUME KILL TREND"
             climax_dates[confirm_at] = dates[i].strftime(date_fmt)
             climax_lows[confirm_at] = low_arr[i]
-            i = confirm_at + 1  # lompat lewati bar yang sudah dipakai
+            i = confirm_at + 1
         else:
             i += 1
 
@@ -597,14 +546,35 @@ def check_big_volume_kill_trend(
     df["KillTrend_Low"] = climax_lows
     return df
 
-def get_ma_state(close, ma_list):
+# =========================================
+# 🌪️ FUNGSI STATUS MA (RAPAT/MELILIT) — dengan pilihan tingkat KETAT/MODERAT/LONGGAR
+# =========================================
+# Keempat MA (MA3, MA5, MA10, MA20) SELALU dipakai untuk menentukan status.
+# Yang berubah antar mode hanyalah berapa banyak dari 3 pasangan MA yang
+# berurutan (MA3-MA5, MA5-MA10, MA10-MA20) yang wajib "rapi naik/turun"
+# supaya dianggap RAPAT UP / RAPAT DOWN (bukan MELILIT):
+#   - KETAT   -> wajib 3 dari 3 pasangan urut (paling selektif, dulu ini "versi lama")
+#   - MODERAT -> wajib 2 dari 3 pasangan urut (boleh 1 MA menyimpang sedikit)
+#   - LONGGAR -> wajib 1 dari 3 pasangan urut (paling banyak lolos, dulu ini "versi baru")
+MA_STRICTNESS_MAP = {
+    "Ketat": 3,
+    "Moderat": 2,
+    "Longgar": 1,
+}
+
+def get_ma_state(close, ma_list, min_pairs_ok=2):
+    """min_pairs_ok: jumlah minimal (dari 3) pasangan MA berurutan yang harus
+    'rapi' searah supaya dianggap RAPAT UP/DOWN. Lihat MA_STRICTNESS_MAP di atas."""
     if any(pd.isna(x) for x in ma_list): return "JAUH"
-    
+
     ma_mean = sum(ma_list) / len(ma_list)
     spread = (max(ma_list) - min(ma_list)) / ma_mean
-    
-    is_bullish = ma_list[1] >= ma_list[3] and close > ma_list[3]
-    is_bearish = ma_list[1] <= ma_list[3] and close < ma_list[3]
+
+    pairs_up = [ma_list[i] >= ma_list[i + 1] for i in range(len(ma_list) - 1)]
+    pairs_down = [ma_list[i] <= ma_list[i + 1] for i in range(len(ma_list) - 1)]
+
+    is_bullish = sum(pairs_up) >= min_pairs_ok and close > ma_list[3]
+    is_bearish = sum(pairs_down) >= min_pairs_ok and close < ma_list[3]
 
     if spread <= 0.05: return "RAPAT UP" if is_bullish else "RAPAT DOWN" if is_bearish else "MELILIT"
     elif spread <= 0.08: return "RENGGANG"
@@ -660,13 +630,8 @@ def get_volume_status(df, length, mult, max_range=15.0, sma_vol_len=20):
 
 # =========================================
 # 🧬 FUNGSI ANALISIS KUALITAS SETUP LANJUTAN
-# (VCP, Stage Analysis, Relative Strength vs IHSG, Vol Breakout, Spring, Invalidasi)
 # =========================================
 def detect_vcp_contraction(data, lookback=90, pivot_window=5, min_swing_pct=3.0):
-    """Volatility Contraction Pattern (ala Minervini) pakai deteksi ZigZag: swing high/low
-    baru dianggap valid kalau pembalikannya minimal `min_swing_pct` dari swing sebelumnya --
-    ini supaya wiggle/noise harian kecil nggak ikut dihitung sebagai 'pullback', dan jumlah
-    pullback yang terdeteksi benar-benar mencerminkan struktur base, bukan selalu 4x template."""
     sub = data.tail(lookback).reset_index(drop=True)
     n = len(sub)
     if n < 20:
@@ -683,7 +648,6 @@ def detect_vcp_contraction(data, lookback=90, pivot_window=5, min_swing_pct=3.0)
             raw.append((i, 'L', lows[i]))
     raw.sort(key=lambda x: x[0])
 
-    # Gabung pivot beruntun bertipe sama, simpan yang paling ekstrem
     reduced = []
     for p in raw:
         if reduced and reduced[-1][1] == p[1]:
@@ -692,7 +656,6 @@ def detect_vcp_contraction(data, lookback=90, pivot_window=5, min_swing_pct=3.0)
         else:
             reduced.append(p)
 
-    # Filter ZigZag: pembalikan harus >= min_swing_pct baru dikonfirmasi jadi swing point
     zigzag = []
     for p in reduced:
         if not zigzag:
@@ -706,7 +669,6 @@ def detect_vcp_contraction(data, lookback=90, pivot_window=5, min_swing_pct=3.0)
         pct_change = abs(p[2] - last[2]) / last[2] * 100 if last[2] != 0 else 0
         if pct_change >= min_swing_pct:
             zigzag.append(p)
-        # kalau pembalikannya kekecilan -> dianggap noise, diabaikan (bukan swing baru)
 
     pullbacks = []
     for j in range(len(zigzag) - 1):
@@ -749,10 +711,6 @@ def detect_vcp_contraction(data, lookback=90, pivot_window=5, min_swing_pct=3.0)
 
 
 def get_market_stage(data, slope_lookback=20, cycle_lookback=120):
-    """Posisi dalam siklus besar berdasar slope MA200 (Stage Analysis ala Weinstein).
-    Dipakai sebagai MULTIPLIER ke skor akhir (bukan cuma poin tambahan), karena rapat
-    MA yang identik bisa berarti akumulasi (Stage 1->2) atau distribusi (Stage 3)
-    tergantung fase siklusnya -- konteksnya yang menentukan valid tidaknya sinyal lain."""
     ma200 = data['MA200']
     if len(data) < slope_lookback + 1 or pd.isna(ma200.iloc[-1]) or pd.isna(ma200.iloc[-slope_lookback - 1]):
         return "Data Kurang", 1.0
@@ -778,8 +736,6 @@ def get_market_stage(data, slope_lookback=20, cycle_lookback=120):
 
 
 def get_relative_strength_vs_ihsg(stock_data, ihsg_data, period=20):
-    """Bandingkan kekuatan saham vs IHSG selama periode konsolidasi -- apakah saham
-    tetap kuat / bikin higher-low duluan saat IHSG lemah (tanda demand tersembunyi)."""
     if ihsg_data is None or len(ihsg_data) < period + 1 or len(stock_data) < period + 1:
         return "N/A (IHSG data kosong)", 50
 
@@ -793,18 +749,12 @@ def get_relative_strength_vs_ihsg(stock_data, ihsg_data, period=20):
     ihsg_lemah = ("Rusak" in ihsg_struktur) or ("Volatil" in ihsg_struktur)
     saham_kuat = ("Bagus" in stock_struktur) or ("Konsolidasi" in stock_struktur)
 
-    # [DIUBAH] Sebelumnya semua outperform > 0 dapat skor flat 75, tanpa peduli
-    # besarnya. Temuan empiris: SWID gagal breakout meski outperform IHSG +22.1%
-    # (paling ekstrem di seluruh screening) -- outperform sebesar itu justru sinyal
-    # saham 'sudah kepanasan' duluan (rawan profit taking), bukan makin bagus makin
-    # tinggi. Sekarang skornya naik proporsional sampai +15%, lalu dipotong balik
-    # kalau kelewat ekstrem.
     if ihsg_lemah and saham_kuat:
         return f"💪 Kuat saat IHSG Lemah ({outperform:+.1f}%)", 100
     elif outperform > 15:
         return f"⚠️ Outperform Ekstrem ({outperform:+.1f}%, waspada sudah kepanasan)", 35
     elif outperform > 0:
-        score = 60 + min(outperform, 15) / 15 * 30  # 0% -> 60, 15% -> 90
+        score = 60 + min(outperform, 15) / 15 * 30
         return f"📈 Outperform IHSG ({outperform:+.1f}%)", round(score, 1)
     elif outperform > -3:
         return f"➖ Sejalan IHSG ({outperform:+.1f}%)", 50
@@ -813,8 +763,6 @@ def get_relative_strength_vs_ihsg(stock_data, ihsg_data, period=20):
 
 
 def detect_shakeout_spring(data, lookback=30, recent_bars=3, undercut_pct=0.3):
-    """Wyckoff Spring: harga sempat tembus sedikit di bawah support lalu cepat balik naik
-    (jebakan shakeout pemegang lemah) -- sering jadi titik entry paling matang."""
     if len(data) < lookback + recent_bars:
         return "-", 0
     sub = data.tail(lookback + recent_bars)
@@ -828,8 +776,6 @@ def detect_shakeout_spring(data, lookback=30, recent_bars=3, undercut_pct=0.3):
 
 
 def check_breakout_volume(data, lookback=10, resistance_window=20, vol_mult_threshold=1.5):
-    """Kalau sudah breakout dari konsolidasi, cek apakah disertai lonjakan volume
-    (idealnya >=1.5-2x rata-rata) atau berpotensi fakeout."""
     if len(data) < lookback + resistance_window + 5:
         return "Data Kurang", None
     resistance = data['High'].iloc[-(lookback + resistance_window):-lookback].max()
@@ -850,12 +796,6 @@ def check_breakout_volume(data, lookback=10, resistance_window=20, vol_mult_thre
 
 
 def get_invalidation_level(data, vcp_last_swing_low=None, lookback=30, max_dist_pct=25.0):
-    """Level harga di mana setup dianggap batal -- kesiapan entry secara praktis.
-    Prioritas: swing low terakhir dari struktur ZigZag/VCP yang sudah dikonfirmasi
-    (lebih relevan ke bentuk konsolidasi yang beneran terdeteksi). Kalau swing low itu
-    tidak tersedia, di atas harga sekarang, atau kejauhan (>max_dist_pct% dari Close --
-    biasanya tanda ambil low dari sebelum rally, bukan dari base saat ini), fallback ke
-    low N-bar terakhir seperti sebelumnya."""
     if len(data) == 0:
         return None
     close = float(data['Close'].iloc[-1])
@@ -871,11 +811,6 @@ def get_invalidation_level(data, vcp_last_swing_low=None, lookback=30, max_dist_
 
 
 def detect_ma_dynamics(data, tight_threshold=0.05, wide_threshold=0.08, stability_window=5, squeeze_lookback=10):
-    """Analisis dinamika rapat/melilit-nya MA3-5-10-20, bukan cuma status sesaat:
-    - MA Spread (%): jarak aktual (kontinu, bukan cuma label kategori RAPAT/RENGGANG/JAUH)
-    - Stabilitas: berapa dari N bar terakhir statusnya konsisten rapat (rendah = whipsaw/noise)
-    - Fresh Squeeze: baru mengetat dari renggang (sinyal plus, mirip BB squeeze) vs sudah lama rapat stagnan
-    """
     ma_cols = ['MA3', 'MA5', 'MA10', 'MA20']
     neutral = {"spread_pct": None, "spread_score": 50, "stability_label": "-", "stability_score": 50,
                "squeeze_label": "-", "squeeze_score": 50}
@@ -892,7 +827,7 @@ def detect_ma_dynamics(data, tight_threshold=0.05, wide_threshold=0.08, stabilit
         return neutral
 
     spread_pct = round(float(current_spread) * 100, 2)
-    spread_score = max(0.0, min(100.0, 100 - spread_pct * 20))  # 0% -> 100, 5% -> 0
+    spread_score = max(0.0, min(100.0, 100 - spread_pct * 20))
 
     recent_window = spread_series.tail(stability_window)
     stable_count = int((recent_window <= tight_threshold).sum())
@@ -918,13 +853,6 @@ def detect_ma_dynamics(data, tight_threshold=0.05, wide_threshold=0.08, stabilit
 
 
 def get_squeeze_extension_score(data, tight_pct=3.0, blown_pct=10.0):
-    """[TAMBAHAN] Ukur seberapa jauh Close sudah lari dari MA20 (pusat cluster MA
-    rapat/melilit). Temuan empiris (screening 13 Aug 2026, 9 naik vs 2 gagal): SWID gagal
-    padahal skor & VCP-nya bagus karena Close sudah +10.3% di atas MA20 saat terdeteksi --
-    sudah 'kepanasan' duluan sebelum breakout dicoba, rawan profit taking. Saham yang naik
-    rata-rata masih dekat cluster-nya (Close-MA20 sekitar 1-8%). Skor ini KHUSUS relevan
-    untuk setup MA Rapat Up/Melilit -- makin dekat Close ke MA20 saat rapat, makin 'segar'
-    setupnya; makin jauh, makin besar risiko sudah telat masuk / mean reversion."""
     if 'MA20' not in data.columns or pd.isna(data['MA20'].iloc[-1]) or data['MA20'].iloc[-1] == 0:
         return None, 50.0
     close = float(data['Close'].iloc[-1])
@@ -949,15 +877,6 @@ def get_squeeze_extension_score(data, tight_pct=3.0, blown_pct=10.0):
 
 
 def get_momentum_divergence_score(data, last_candle_type="", lookback=8):
-    """[TAMBAHAN] Deteksi bearish momentum divergence: harga masih naik/dekat tertinggi
-    N bar terakhir, tapi RSI & MACD histogram-nya justru melandai/turun. Ini persis pola
-     yang kelihatan di chart TradingView SWID (StochRSI & RSI berstatus 'BULLISH MELEMAH'
-    padahal harga masih di atas semua MA) tepat sebelum candle Dark Cloud Cover muncul.
-    Sebelumnya RSI/MACD dihitung tapi cuma dipakai untuk cari divergence BULLISH (buat
-    nangkep pembalikan di bottom) -- tidak ada satupun sinyal yang mengecek pelemahan
-    momentum di TOP. Juga dicek: candle terakhir apakah pola reversal bearish (Shooting
-    Star/Hanging Man/Marubozu Bearish) -- kalau ya, tambahan penalti karena itu sering
-    muncul tepat di titik distribusi (mirip label 'GUYUR' di indikator TradingView user)."""
     if len(data) < lookback + 1 or not all(c in data.columns for c in ["RSI", "MACD2_HIST", "Close"]):
         return "-", 50.0
 
@@ -993,11 +912,6 @@ def get_momentum_divergence_score(data, last_candle_type="", lookback=8):
 
 
 def get_volume_dryness_score(data, lookback=5):
-    """[BARU] Cek apakah volume rata-rata N bar terakhir (saat kondisi MA rapat) kering
-    dibanding rata-rata 20 bar-nya sendiri. Beda dari check_breakout_volume() yang cuma
-    cek volume PAS breakout terjadi -- ini cek partisipasi SELAMA fase rapatnya. Rally
-    menuju rapat yang volume-nya kering kurang meyakinkan sebagai akumulasi riil, gampang
-    dibalik begitu ada sedikit jual (rendah likuiditas = rentan)."""
     if 'Vol_MA20' not in data.columns or len(data) < lookback + 20:
         return "-", 50.0
     vol_ma20 = data['Vol_MA20'].iloc[-1]
@@ -1017,8 +931,6 @@ def get_volume_dryness_score(data, lookback=5):
 
 
 def get_ma_major_position(data, near_threshold_pct=2.0):
-    """Cek apakah cluster MA yang rapat ini kebetulan nempel di MA50/100/200 (level
-    psikologis yang lebih dipercaya banyak trader/institusi) atau ngambang di kekosongan."""
     close = data['Close'].iloc[-1]
     levels = {}
     for col in ['MA50', 'MA100', 'MA200']:
@@ -1039,11 +951,6 @@ def get_ma_major_position(data, near_threshold_pct=2.0):
 
 
 def count_failed_consolidations(data, lookback_bars=130, min_episode_len=3, breakdown_pct=3.0, breakdown_window=10):
-    """Hitung berapa kali dalam ~lookback_bars terakhir (default ~6 bulan data harian)
-    terjadi episode MA Rapat/Melilit yang berakhir breakdown (Close jatuh >=breakdown_pct%
-    di bawah MA20 dalam breakdown_window bar setelah episode itu berakhir). Rapat yang
-    'pertama kali' setelah downtrend panjang lebih dipercaya daripada rapat ke-4 kalinya
-    di area yang sama (pola gagal berulang = biasanya distribusi pelan-pelan)."""
     ma_cols = ['MA3', 'MA5', 'MA10', 'MA20']
     if not all(c in data.columns for c in ma_cols) or len(data) < lookback_bars + breakdown_window:
         return "-", 50.0
@@ -1098,24 +1005,6 @@ def calc_setup_score(vcp_score, rs_score, vol_dry_status, shakeout_score, bandar
                      stage_mult, spread_score=50.0, stability_score=50.0, squeeze_score=50.0,
                      ma_major_score=50.0, failed_cons_score=50.0, extension_score=50.0,
                      volume_dryness_score=50.0, momentum_divergence_score=50.0):
-    """Gabungkan semua komponen jadi 1 skor 0-100. Stage Analysis dipakai sebagai
-    MULTIPLIER (bukan additive) di akhir -- lihat alasannya di get_market_stage().
-
-    [DIUBAH lagi] Tambah `volume_dryness_score` (partisipasi volume selama fase rapat,
-    lihat get_volume_dryness_score) berbobot 0.05, bobot diambil dari vol_dry (0.10->0.07)
-    yang konsepnya berdekatan, dan shakeout (0.03->0.01) yang bobotnya paling kecil urgensinya.
-
-    [DIUBAH lagi] Tambah `momentum_divergence_score` (lihat get_momentum_divergence_score)
-    berbobot 0.05 -- nangkep pola "harga masih naik tapi RSI/MACD melemah + candle reversal"
-    yang kelihatan persis di chart TradingView SWID user (RSI/StochRSI 'BULLISH MELEMAH',
-    candle Dark Cloud Cover di dekat high). Bobot diambil dari bandar_score (0.10->0.07)
-    dan ma_major_score (0.08->0.06) yang secara empiris paling lemah daya pembedanya.
-
-    Juga: bandar_score sekarang DIKOREKSI kalau nggak konsisten dengan pola volume --
-    kasus nyata SWID (screening 13 Aug 2026): Status Broksum bilang AKUMULASI tapi
-    Vol 5 Bar Mode bilang NO POLA. Broker summary AKUMULASI yang tidak didukung pola
-    volume harga yang sama kurang meyakinkan (bisa cuma 1-2 broker, bukan partisipasi
-    luas) -- skornya dipotong separuh kalau terjadi mismatch begini."""
     vol_dry_map = {"AKUMULASI": 100, "ASCENSION": 90, "NO POLA": 50, "DISTRIBUSI": 10, "MARKDOWN": 0, "-": 50}
     vol_dry_score = vol_dry_map.get(vol_dry_status, 50)
 
@@ -1125,27 +1014,26 @@ def calc_setup_score(vcp_score, rs_score, vol_dry_status, shakeout_score, bandar
         elif "DISTRIBUSI" in bandar_status: bandar_score = 10
         elif "NETRAL" in bandar_status: bandar_score = 50
 
-    # [BARU] Koreksi konsistensi broksum vs pola volume
     if bandar_score == 100 and vol_dry_status not in ("AKUMULASI", "ASCENSION"):
-        bandar_score = 50  # broksum akumulasi tapi tak didukung pola volume -> tak sepenuhnya dipercaya
+        bandar_score = 50
 
-    breakout_component = breakout_score if breakout_score is not None else 50  # netral kalau belum breakout
+    breakout_component = breakout_score if breakout_score is not None else 50
 
     raw = (
         vcp_score * 0.15 +
         spread_score * 0.08 +
         stability_score * 0.05 +
         squeeze_score * 0.02 +
-        ma_major_score * 0.06 +         # was 0.08
+        ma_major_score * 0.06 +
         failed_cons_score * 0.10 +
         rs_score * 0.15 +
-        vol_dry_score * 0.07 +          # was 0.10
-        shakeout_score * 0.01 +         # was 0.03
-        bandar_score * 0.07 +           # was 0.10
+        vol_dry_score * 0.07 +
+        shakeout_score * 0.01 +
+        bandar_score * 0.07 +
         breakout_component * 0.07 +
         extension_score * 0.07 +
-        volume_dryness_score * 0.05 +   # [BARU]
-        momentum_divergence_score * 0.05  # [BARU]
+        volume_dryness_score * 0.05 +
+        momentum_divergence_score * 0.05
     )
     return round(min(100, max(0, raw * stage_mult)), 1)
 
@@ -1154,40 +1042,21 @@ def calc_setup_score(vcp_score, rs_score, vol_dry_status, shakeout_score, bandar
 # =========================================
 st.set_page_config(page_title="IHSG Screener by LTF", page_icon="📊", layout="wide", initial_sidebar_state="expanded")
 
-# =========================================
-# SESSION STATE (biar hasil screening tidak hilang saat tombol lain diklik,
-# misalnya tombol Download Excel — Streamlit rerun seluruh script tiap
-# ada tombol yang ditekan, jadi hasil screening perlu "disimpan" di sini)
-# =========================================
 if "df_hasil" not in st.session_state:
     st.session_state.df_hasil = None
 if "screening_meta" not in st.session_state:
     st.session_state.screening_meta = {}
 
-# =========================================
-# CUSTOM THEME (CSS)
-# =========================================
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800&family=Inter:wght@400;500;600&display=swap');
-
     html, body, [class*="css"]  { font-family: 'Inter', sans-serif; }
-
     :root{
-        --bg-deep:#0a0e1a;
-        --bg-panel:#131a2b;
-        --bg-panel-soft:#161f34;
-        --accent-cyan:#22d3ee;
-        --accent-purple:#a78bfa;
-        --accent-amber:#fbbf24;
-        --accent-green:#34d399;
-        --accent-pink:#f472b6;
-        --text-soft:#c7d2e1;
-        --text-muted:#8291ab;
-        --border-soft:rgba(148,163,184,0.16);
+        --bg-deep:#0a0e1a; --bg-panel:#131a2b; --bg-panel-soft:#161f34;
+        --accent-cyan:#22d3ee; --accent-purple:#a78bfa; --accent-amber:#fbbf24;
+        --accent-green:#34d399; --accent-pink:#f472b6;
+        --text-soft:#c7d2e1; --text-muted:#8291ab; --border-soft:rgba(148,163,184,0.16);
     }
-
-    /* App background */
     .stApp{
         background:
             radial-gradient(circle at 8% -10%, rgba(34,211,238,0.10) 0%, transparent 40%),
@@ -1195,132 +1064,57 @@ st.markdown("""
             linear-gradient(180deg, #0a0e1a 0%, #0b1120 55%, #090c16 100%);
         color: var(--text-soft);
     }
-
-    /* Hide default streamlit chrome clutter a bit */
     header[data-testid="stHeader"]{ background: transparent; }
-
-    /* Sidebar */
     section[data-testid="stSidebar"]{
         background: linear-gradient(180deg, #0d1424 0%, #0a0e1a 100%);
         border-right: 1px solid var(--border-soft);
     }
     section[data-testid="stSidebar"] .block-container{ padding-top: 1.2rem; }
-
-    /* Sidebar title */
     section[data-testid="stSidebar"] h1{
-        font-family:'Poppins',sans-serif;
-        font-weight:700;
-        font-size: 1.35rem;
+        font-family:'Poppins',sans-serif; font-weight:700; font-size: 1.35rem;
         background: linear-gradient(90deg, var(--accent-cyan), var(--accent-purple));
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        padding-bottom: 0.6rem;
-        border-bottom: 1px solid var(--border-soft);
-        margin-bottom: 0.8rem;
+        -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        padding-bottom: 0.6rem; border-bottom: 1px solid var(--border-soft); margin-bottom: 0.8rem;
     }
-
-    /* Expanders in sidebar = colorful cards */
     section[data-testid="stSidebar"] [data-testid="stExpander"]{
-        background: var(--bg-panel);
-        border: 1px solid var(--border-soft);
-        border-radius: 12px;
-        margin-bottom: 10px;
-        overflow: hidden;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+        background: var(--bg-panel); border: 1px solid var(--border-soft); border-radius: 12px;
+        margin-bottom: 10px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.25);
     }
-    section[data-testid="stSidebar"] [data-testid="stExpander"] summary{
-        font-weight:600;
-        color: var(--text-soft);
-    }
-    section[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover{
-        color: var(--accent-cyan);
-    }
-
-    /* Checkboxes accent color */
+    section[data-testid="stSidebar"] [data-testid="stExpander"] summary{ font-weight:600; color: var(--text-soft); }
+    section[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover{ color: var(--accent-cyan); }
     [data-testid="stCheckbox"] label span{ color: var(--text-soft); }
     input[type="checkbox"]{ accent-color: var(--accent-cyan); }
-
-    /* Sliders */
     div[data-testid="stSlider"] [role="slider"]{
-        background-color: var(--accent-cyan) !important;
-        box-shadow: 0 0 0 4px rgba(34,211,238,0.18);
+        background-color: var(--accent-cyan) !important; box-shadow: 0 0 0 4px rgba(34,211,238,0.18);
     }
     div[data-testid="stSlider"] .stSliderTrackHighlight{ background: linear-gradient(90deg, var(--accent-cyan), var(--accent-purple)) !important; }
-
-    /* Selectbox / number / date inputs */
     div[data-baseweb="select"] > div, .stNumberInput input, .stDateInput input{
-        background-color: var(--bg-panel-soft) !important;
-        border: 1px solid var(--border-soft) !important;
-        color: var(--text-soft) !important;
-        border-radius: 8px !important;
+        background-color: var(--bg-panel-soft) !important; border: 1px solid var(--border-soft) !important;
+        color: var(--text-soft) !important; border-radius: 8px !important;
     }
-
-    /* Divider */
     hr{ border-color: var(--border-soft) !important; }
-
-    /* Primary button (MULAI SCREENING) */
     .stButton > button[kind="primary"]{
         background: linear-gradient(90deg, #06b6d4 0%, #6366f1 55%, #a855f7 100%);
-        border: none;
-        border-radius: 14px;
-        padding: 0.85rem 1.2rem;
-        font-weight: 700;
-        font-size: 1.02rem;
-        letter-spacing: 0.03em;
-        color: white;
-        box-shadow: 0 8px 24px rgba(99,102,241,0.35);
-        transition: transform 0.15s ease, box-shadow 0.15s ease;
+        border: none; border-radius: 14px; padding: 0.85rem 1.2rem; font-weight: 700;
+        font-size: 1.02rem; letter-spacing: 0.03em; color: white;
+        box-shadow: 0 8px 24px rgba(99,102,241,0.35); transition: transform 0.15s ease, box-shadow 0.15s ease;
     }
-    .stButton > button[kind="primary"]:hover{
-        transform: translateY(-2px);
-        box-shadow: 0 12px 30px rgba(168,85,247,0.45);
-    }
-
-    /* Download button */
+    .stButton > button[kind="primary"]:hover{ transform: translateY(-2px); box-shadow: 0 12px 30px rgba(168,85,247,0.45); }
     .stDownloadButton > button{
-        background: linear-gradient(90deg, #10b981 0%, #22d3ee 100%);
-        border: none;
-        border-radius: 12px;
-        color: #04121a;
-        font-weight: 700;
+        background: linear-gradient(90deg, #10b981 0%, #22d3ee 100%); border: none; border-radius: 12px;
+        color: #04121a; font-weight: 700;
     }
-
-    /* Alerts (success/warning/error/info) - soften + colorize border */
     div[data-testid="stAlertContentSuccess"], div[data-testid="stNotification"]{ border-radius: 12px; }
     .stAlert{ border-radius: 12px; }
-
-    /* Dataframe */
-    [data-testid="stDataFrame"]{
-        border: 1px solid var(--border-soft);
-        border-radius: 12px;
-        overflow: hidden;
-    }
-
-    /* Filter summary chips */
+    [data-testid="stDataFrame"]{ border: 1px solid var(--border-soft); border-radius: 12px; overflow: hidden; }
     .filter-summary-box{
-        background: var(--bg-panel);
-        border: 1px solid var(--border-soft);
-        border-radius: 14px;
-        padding: 14px 16px;
-        margin-bottom: 1.1rem;
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        align-items: center;
+        background: var(--bg-panel); border: 1px solid var(--border-soft); border-radius: 14px;
+        padding: 14px 16px; margin-bottom: 1.1rem; display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
     }
-    .filter-summary-empty{
-        color: var(--text-muted);
-        font-style: italic;
-        font-size: 0.92rem;
-    }
+    .filter-summary-empty{ color: var(--text-muted); font-style: italic; font-size: 0.92rem; }
     .filter-chip{
-        display:inline-block;
-        padding: 6px 13px;
-        border-radius: 999px;
-        font-size: 0.82rem;
-        font-weight: 600;
-        color: #06111d;
-        background: linear-gradient(90deg, var(--chip-a), var(--chip-b));
+        display:inline-block; padding: 6px 13px; border-radius: 999px; font-size: 0.82rem; font-weight: 600;
+        color: #06111d; background: linear-gradient(90deg, var(--chip-a), var(--chip-b));
         box-shadow: 0 2px 8px rgba(0,0,0,0.25);
     }
     .filter-chip:nth-child(6n+1){ --chip-a:#22d3ee; --chip-b:#67e8f9; }
@@ -1329,18 +1123,13 @@ st.markdown("""
     .filter-chip:nth-child(6n+4){ --chip-a:#fbbf24; --chip-b:#fcd34d; }
     .filter-chip:nth-child(6n+5){ --chip-a:#f472b6; --chip-b:#f9a8d4; }
     .filter-chip:nth-child(6n+6){ --chip-a:#60a5fa; --chip-b:#93c5fd; }
-
     .section-label{
-        font-family:'Poppins',sans-serif;
-        font-weight:700;
-        font-size:1.05rem;
-        color: var(--text-soft);
-        margin-bottom: 0.5rem;
+        font-family:'Poppins',sans-serif; font-weight:700; font-size:1.05rem;
+        color: var(--text-soft); margin-bottom: 0.5rem;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# Judul Utama
 st.markdown("""
 <h1 style='text-align:center; font-family:"Poppins",sans-serif; font-weight:800; font-size:2.6rem;
     background: linear-gradient(90deg, #22d3ee 0%, #a78bfa 50%, #f472b6 100%);
@@ -1352,7 +1141,6 @@ st.markdown("<h4 style='text-align: center; color: #8291ab; font-weight:500; mar
 st.markdown("<p style='text-align: center; color: #64748b; font-size: 13px;'>🙏 Thanks to kak gitaketawa aka anak gawang aka mahaguru karyawan IHSG</p>", unsafe_allow_html=True)
 st.divider()
 
-# Sidebar Configuration
 st.sidebar.title("⚙️ Konfigurasi Screener")
 
 with st.sidebar.expander("📅 Pengaturan Umum & Waktu", expanded=True):
@@ -1366,7 +1154,6 @@ with st.sidebar.expander("🕵️‍♂️ Fitur Bandarmologi", expanded=False):
     cek_broksum = st.checkbox("📊 Cek Broksum", value=False)
     periode_broksum = "Harian"
 
-    # Penyesuaian Tanggal Akhir Broksum
     broksum_target_date = target_date
     if target_date.weekday() == 5:
         broksum_target_date = target_date - timedelta(days=1)
@@ -1406,7 +1193,6 @@ with st.sidebar.expander("🔥 Sinyal Divergence", expanded=False):
     st.markdown("---")
     st.caption("📏 Jarak antar swing untuk semua bullish divergence (MACD, CCI, Stoch RSI) tetap: minimal 5 bar, maksimal 100 bar.")
 
-# Jarak antar swing dikunci sama untuk semua scanner bullish divergence
 DIV_MIN_GAP, DIV_MAX_GAP = 5, 100
 
 with st.sidebar.expander("💥 Big Volume Kill Trend", expanded=False):
@@ -1440,6 +1226,26 @@ with st.sidebar.expander("🎯 Indikator Tren & Struktur Harga", expanded=False)
 with st.sidebar.expander("🌪️ MA Rapat & Melilit", expanded=False):
     filter_melilit = st.checkbox("🌪️ MA Melilit (Bertumpuk)", value=False)
     filter_rapat_up = st.checkbox("📏 MA Rapat Up", value=False)
+
+    st.markdown("---")
+    ma_strictness_label = st.selectbox(
+        "🎚️ Tingkat Ketat Struktur MA (RAPAT UP/DOWN):",
+        list(MA_STRICTNESS_MAP.keys()),
+        index=1,  # default: Moderat
+    )
+    ma_min_pairs_ok = MA_STRICTNESS_MAP[ma_strictness_label]
+
+    STRICTNESS_INFO = {
+        "Ketat": "🔒 **Ketat** — wajib ketiga pasangan MA3≥MA5, MA5≥MA10, MA10≥MA20 (semuanya) berurutan rapi. "
+                 "Paling sedikit saham yang lolos, tapi setup yang lolos paling 'bersih' strukturnya.",
+        "Moderat": "⚖️ **Moderat** — minimal 2 dari 3 pasangan MA harus berurutan rapi (boleh 1 MA sedikit menyimpang). "
+                   "Titik tengah: cukup selektif tapi tidak terlalu ketat.",
+        "Longgar": "🌊 **Longgar** — cukup 1 dari 3 pasangan MA berurutan (praktis hanya cek MA5 vs MA20 + Close vs MA20). "
+                   "Paling banyak saham lolos, tapi lebih rawan sinyal palsu/struktur MA yang belum benar-benar rapi.",
+    }
+    st.caption(STRICTNESS_INFO[ma_strictness_label])
+    st.caption("Keempat MA (MA3, MA5, MA10, MA20) tetap selalu dipakai di semua tingkat — yang berubah cuma seberapa banyak pasangan MA yang wajib berurutan rapi.")
+
     st.markdown("---")
     cek_kualitas_setup = st.checkbox(
         "🧬 Rangking Kualitas Setup (VCP, Stage, RS vs IHSG, Vol Breakout, Spring, Invalidasi)",
@@ -1469,9 +1275,6 @@ with st.sidebar.expander("📊 Filter Volume Akumulasi", expanded=False):
     filter_vol_10 = st.checkbox("✅ Akumulasi/Ascension 10 Bar", value=False)
     filter_vol_20 = st.checkbox("✅ Akumulasi/Ascension 20 Bar", value=False)
 
-# =========================================
-# RINGKASAN SINYAL / FILTER YANG DIPILIH
-# =========================================
 filter_catalog = [
     (filter_premarket, "🌅 Pre-Market Setup"),
     (filter_div, "🔥 Hybrid Bullish Divergence (MACD)"),
@@ -1489,8 +1292,8 @@ filter_catalog = [
     (filter_bounce_ma20, "🏓 Pantulan MA20"),
     (filter_bounce_ma50, "🏓 Pantulan MA50"),
     (filter_adx, "🚀 ADX Trend Bullish"),
-    (filter_melilit, "🌪️ MA Melilit"),
-    (filter_rapat_up, "📏 MA Rapat Up"),
+    (filter_melilit, f"🌪️ MA Melilit ({ma_strictness_label})"),
+    (filter_rapat_up, f"📏 MA Rapat Up ({ma_strictness_label})"),
     (filter_dekat_ma20, "🎯 Dekat MA20"),
     (filter_dekat_ma50, "🎯 Dekat MA50"),
     (filter_dekat_ma100, "🎯 Dekat MA100"),
@@ -1525,13 +1328,10 @@ tf_map = {
 }
 data_interval, days_back, resample_freq = tf_map[tf_choice]["interval"], tf_map[tf_choice]["days_back"], tf_map[tf_choice]["resample"]
 
-# Timeframe di bawah 1 hari (intraday) -> tampilkan jam juga di tanggal divergence,
-# selain itu (Daily/Weekly/Monthly) cukup tanggal saja.
 INTRADAY_TF_LIST = ["15 Menit", "30 Menit", "1 Jam", "2 Jam", "3 Jam", "4 Jam"]
 is_intraday_tf = tf_choice in INTRADAY_TF_LIST
 pivot_date_fmt = "%Y-%m-%d %H:%M" if is_intraday_tf else "%Y-%m-%d"
 
-# Layout Tombol Eksekusi (Tengah)
 col1, col2, col3 = st.columns([1, 2, 1])
 with col2:
     start_button = st.button("🚀 MULAI SCREENING SAHAM", type="primary", use_container_width=True)
@@ -1582,7 +1382,6 @@ if start_button:
             status.update(label=f"Gagal mengambil data Yahoo Finance: {e}", state="error")
             st.stop()
 
-        # Data IHSG (dibutuhkan untuk hitung Kekuatan Relatif vs IHSG)
         ihsg_full_data = None
         if cek_kualitas_setup:
             st.write("Mengunduh data IHSG untuk perbandingan kekuatan relatif...")
@@ -1597,10 +1396,6 @@ if start_button:
                     progress=False,
                     threads=True,
                 )
-                # yfinance kadang mengembalikan kolom MultiIndex (Ticker, Field) walau
-                # cuma 1 ticker diminta -- ekstrak persis seperti cara saham biasa di-extract
-                # (lihat loop utama di bawah), supaya Close/High/Low/Volume selalu jadi Series
-                # rata (bukan DataFrame bersarang) sebelum dipakai di get_relative_strength_vs_ihsg.
                 if isinstance(ihsg_raw.columns, pd.MultiIndex):
                     if "^JKSE" in ihsg_raw.columns.get_level_values(0):
                         ihsg_full_data = ihsg_raw["^JKSE"].copy()
@@ -1648,10 +1443,6 @@ if start_button:
                 data = data.dropna(subset=["Close"])
                 if resample_freq:
                     data.index = pd.to_datetime(data.index)
-                    # offset="9h" -> geser titik awal bin resample supaya "nempel" di jam buka
-                    # bursa IDX (09:00 WIB), bukan dari tengah malam (00:00). Tanpa ini, candle
-                    # 2/3/4 Jam jadi kepotong salah (mis. berlabel 08:00/12:00, padahal harusnya
-                    # 09:00/13:00 sesuai jam sesi perdagangan), sehingga OHLC-nya beda dari TradingView.
                     data = data.resample(resample_freq, offset="9h").agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}).dropna()
 
                 if len(data) < 100: continue
@@ -1661,7 +1452,6 @@ if start_button:
 
                 data["Vol_MA20"] = data["Volume"].rolling(20).mean()
 
-                # Panggil fungsi divergence versi baru (parameter dari sidebar)
                 data = check_hybrid_bullish_divergence(
                     data,
                     ma50_col="MA50",
@@ -1673,7 +1463,6 @@ if start_button:
                     date_fmt=pivot_date_fmt,
                 )
 
-                # Panggil fungsi CCI Bullish Divergence (parameter dari sidebar)
                 data = check_cci_bullish_divergence(
                     data,
                     cci_period=cci_period,
@@ -1684,7 +1473,6 @@ if start_button:
                     date_fmt=pivot_date_fmt,
                 )
 
-                # Panggil fungsi Hybrid Stoch RSI Bullish Divergence (parameter dari sidebar)
                 data = check_hybrid_stochrsi_bullish_divergence(
                     data,
                     oversold_level=stochrsi_oversold,
@@ -1695,7 +1483,6 @@ if start_button:
                     date_fmt=pivot_date_fmt,
                 )
 
-                # Panggil fungsi Big Volume Kill Trend (parameter dari sidebar)
                 data = check_big_volume_kill_trend(
                     data,
                     trend_lookback=kt_trend_lookback,
@@ -1729,7 +1516,6 @@ if start_button:
                 data['BB_Lower'] = close_series.rolling(20).mean() - (2.0 * close_series.rolling(20).std(ddof=0))
                 data['BB_Buy'] = (close_series.shift(1) < data['BB_Lower'].shift(1)) & (close_series > data['BB_Lower'])
 
-                # ================= EVALUASI SINYAL =================
                 recent = data.tail(lookback_days)
                 matched_signals = []
 
@@ -1777,7 +1563,6 @@ if start_button:
 
                 struktur_harga = evaluate_price_structure(data, period=20)
 
-                # ================= ANALISIS KUALITAS SETUP LANJUTAN =================
                 vcp_score_val, vcp_label = 0, "-"
                 stage_label, stage_mult = "-", 1.0
                 rs_label, rs_score_val = "-", 50
@@ -1789,8 +1574,8 @@ if start_button:
                 squeeze_label, squeeze_score_val = "-", 50
                 ma_major_label, ma_major_score_val = "-", 50
                 failed_cons_label, failed_cons_score_val = "-", 50
-                extension_label, extension_score_val = "-", 50  # [BARU]
-                vol_dryness_label, vol_dryness_score_val = "-", 50  # [BARU]
+                extension_label, extension_score_val = "-", 50
+                vol_dryness_label, vol_dryness_score_val = "-", 50
 
                 if cek_kualitas_setup:
                     try:
@@ -1818,14 +1603,11 @@ if start_button:
 
                         failed_cons_label, failed_cons_score_val = count_failed_consolidations(data)
 
-                        ext_label_raw, extension_score_val = get_squeeze_extension_score(data)  # [BARU]
+                        ext_label_raw, extension_score_val = get_squeeze_extension_score(data)
                         extension_label = ext_label_raw if ext_label_raw is not None else "-"
 
-                        vol_dryness_label, vol_dryness_score_val = get_volume_dryness_score(data)  # [BARU]
+                        vol_dryness_label, vol_dryness_score_val = get_volume_dryness_score(data)
                     except Exception:
-                        # Kalau ada error di analisis kualitas setup (mis. data IHSG
-                        # bermasalah), JANGAN sampai gugurkan seluruh baris saham ini --
-                        # cukup tandai kolom kualitasnya "Error", sinyal utama tetap jalan.
                         vcp_score_val, vcp_label = 0, "⚠️ Error"
                         stage_label, stage_mult = "⚠️ Error", 1.0
                         rs_label, rs_score_val = "⚠️ Error", 50
@@ -1837,10 +1619,9 @@ if start_button:
                         squeeze_label, squeeze_score_val = "⚠️ Error", 50
                         ma_major_label, ma_major_score_val = "⚠️ Error", 50
                         failed_cons_label, failed_cons_score_val = "⚠️ Error", 50
-                        extension_label, extension_score_val = "⚠️ Error", 50  # [BARU]
-                        vol_dryness_label, vol_dryness_score_val = "⚠️ Error", 50  # [BARU]
+                        extension_label, extension_score_val = "⚠️ Error", 50
+                        vol_dryness_label, vol_dryness_score_val = "⚠️ Error", 50
 
-                # ================= TANGGAL & CHANGE DIVERGENCE MACD (FIXED) =================
                 tanggal_buldiv = "-"
                 change_div = "-"
 
@@ -1848,23 +1629,16 @@ if start_button:
                     df_buldiv = recent[recent["Hybrid_Div_Signal"] != ""]
                     matched_signals.extend(list(set(df_buldiv["Hybrid_Div_Signal"])))
 
-                    # Tanggal sekarang diambil dari PivotDate (tanggal swing low aktual),
-                    # bukan dari df_buldiv.index (yang merupakan tanggal bar konfirmasi).
-                    # Setiap tanggal disertai tag jenisnya (FAST/STD/STRONG) biar jelas
-                    # itu change dari div MACD tipe apa.
                     tanggal_buldiv = ", ".join([
                         f"{d} ({t})" for d, t in zip(df_buldiv["Hybrid_Div_PivotDate"], df_buldiv["Hybrid_Div_Tag"]) if d
                     ])
 
-                    # Change % dihitung dari Close di titik pivot (swing low) yang benar,
-                    # bukan dari Close di bar konfirmasi seperti versi lama.
                     last_div_price = df_buldiv["Hybrid_Div_PivotClose"].iloc[-1]
                     last_div_tag = df_buldiv["Hybrid_Div_Tag"].iloc[-1]
                     if pd.notna(last_div_price) and last_div_price != 0:
                         change_val = round(((close - last_div_price) / last_div_price) * 100, 2)
                         change_div = f"{change_val}% ({last_div_tag})"
 
-                # ================= TANGGAL & CHANGE CCI DIVERGENCE =================
                 tanggal_ccidiv = "-"
                 change_ccidiv = "-"
 
@@ -1878,7 +1652,6 @@ if start_button:
                     if pd.notna(last_cci_price) and last_cci_price != 0:
                         change_ccidiv = round(((close - last_cci_price) / last_cci_price) * 100, 2)
 
-                # ================= TANGGAL & CHANGE HYBRID STOCH RSI DIVERGENCE =================
                 tanggal_stochrsidiv = "-"
                 change_stochrsidiv = "-"
 
@@ -1886,7 +1659,6 @@ if start_button:
                     df_stochrsi = recent[recent["StochRSI_Div_Signal"] != ""]
                     matched_signals.extend(list(set(df_stochrsi["StochRSI_Div_Signal"])))
 
-                    # Setiap tanggal disertai tag jenisnya (FAST/STD/STRONG)
                     tanggal_stochrsidiv = ", ".join([
                         f"{d} ({t})" for d, t in zip(df_stochrsi["StochRSI_Div_PivotDate"], df_stochrsi["StochRSI_Div_Tag"]) if d
                     ])
@@ -1897,7 +1669,6 @@ if start_button:
                         change_val_sr = round(((close - last_stochrsi_price) / last_stochrsi_price) * 100, 2)
                         change_stochrsidiv = f"{change_val_sr}% ({last_stochrsi_tag})"
 
-                # ================= TANGGAL & CHANGE BIG VOLUME KILL TREND =================
                 tanggal_killtrend = "-"
                 change_killtrend = "-"
 
@@ -1950,9 +1721,13 @@ if start_button:
                             matched_signals.append(f"🎯 Dkt {m_name}")
                             status_dekat_ma.append(f"{'Atas' if close >= m_val else 'Bawah'} {m_name} ({jarak_pct:.2f}%)")
 
-                s_state = get_ma_state(close, [float(data["MA3"].iloc[-1]), float(data["MA5"].iloc[-1]), float(data["MA10"].iloc[-1]), ma20_now])
-                if filter_melilit and s_state == "MELILIT": matched_signals.append("🌪️ MA MELILIT")
-                if filter_rapat_up and s_state == "RAPAT UP" and close > ma20_now: matched_signals.append("📏 MA RAPAT UP")
+                s_state = get_ma_state(
+                    close,
+                    [float(data["MA3"].iloc[-1]), float(data["MA5"].iloc[-1]), float(data["MA10"].iloc[-1]), ma20_now],
+                    min_pairs_ok=ma_min_pairs_ok,
+                )
+                if filter_melilit and s_state == "MELILIT": matched_signals.append(f"🌪️ MA MELILIT ({ma_strictness_label})")
+                if filter_rapat_up and s_state == "RAPAT UP" and close > ma20_now: matched_signals.append(f"📏 MA RAPAT UP ({ma_strictness_label})")
                 if filter_adx and data['ADX'].iloc[-1] > 20 and data['+DI'].iloc[-1] > data['-DI'].iloc[-1]: matched_signals.append("🚀 ADX BULL")
 
                 stat_vol_5, stat_vol_10, stat_vol_20 = get_volume_status(data, 5, vol_mult), get_volume_status(data, 10, vol_mult), get_volume_status(data, 20, vol_mult)
@@ -2027,6 +1802,7 @@ if start_button:
                         "Close": close,
                         "MA20": round(ma20_now, 2) if not pd.isna(ma20_now) else "-",
                         "S.State": s_state,
+                        "Tingkat Ketat MA": ma_strictness_label,
                         "ADX": round(data['ADX'].iloc[-1], 2),
                     })
             except Exception as e:
@@ -2035,9 +1811,6 @@ if start_button:
         status.update(label="Selesai menganalisa pasar!", state="complete")
         progress_bar.empty()
 
-    # Simpan hasil ke session_state (bukan langsung ditampilkan di sini),
-    # supaya hasilnya tetap ada walau nanti tombol Download diklik (yang
-    # otomatis men-trigger rerun script dari atas oleh Streamlit).
     df_hasil = pd.DataFrame(hasil)
     if not df_hasil.empty:
         if cek_kualitas_setup and "Skor Setup (0-100)" in df_hasil.columns:
@@ -2050,25 +1823,21 @@ if start_button:
         "target_date": target_date,
         "tf_choice": tf_choice,
         "cek_kualitas_setup": cek_kualitas_setup,
+        "ma_strictness_label": ma_strictness_label,
     }
 
-# =========================================
-# TAMPILKAN HASIL (di luar blok start_button, dibaca dari session_state,
-# supaya tidak reset saat tombol Download Excel diklik)
-# =========================================
 if st.session_state.df_hasil is not None:
     df_hasil = st.session_state.df_hasil
     meta = st.session_state.screening_meta
     disp_date = meta.get("target_date", target_date)
     disp_tf = meta.get("tf_choice", tf_choice)
+    disp_strictness = meta.get("ma_strictness_label", ma_strictness_label)
 
     if not df_hasil.empty:
-        st.success(f"🎉 Pencarian Selesai! Ditemukan **{len(df_hasil)}** saham yang sesuai dengan kriteria pada tanggal **{disp_date.strftime('%d %b %Y')}**.")
+        st.success(f"🎉 Pencarian Selesai! Ditemukan **{len(df_hasil)}** saham yang sesuai dengan kriteria pada tanggal **{disp_date.strftime('%d %b %Y')}** (Tingkat Ketat MA: **{disp_strictness}**).")
 
-        # Dataframe dengan lebar mengikuti container
         st.dataframe(df_hasil, use_container_width=True)
 
-        # Siapkan Download File
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             df_hasil.to_excel(writer, index=False)
@@ -2084,4 +1853,4 @@ if st.session_state.df_hasil is not None:
                 key="download_hasil_screening_btn"
             )
     else:
-        st.warning(f"😔 Tidak ada saham yang memenuhi kriteria pada timeframe {disp_tf} untuk tanggal {disp_date.strftime('%d %b %Y')}.")
+        st.warning(f"😔 Tidak ada saham yang memenuhi kriteria pada timeframe {disp_tf} untuk tanggal {disp_date.strftime('%d %b %Y')} (Tingkat Ketat MA: {ma_strictness_label}).")
