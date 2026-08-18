@@ -1225,7 +1225,14 @@ with st.sidebar.expander("📈 MACD, RSI & Stochastic RSI", expanded=False):
     st.markdown("---")
     filter_stoch_early_gc = st.checkbox("⚡ Stoch RSI Early GC", value=False)
     filter_stoch_gc = st.checkbox("✅ Stoch RSI Fase GC", value=False)
-    stoch_param = st.selectbox("Parameter Stoch RSI:", ["5, 3, 3", "14, 3, 3"], index=0)
+    if filter_stoch_early_gc or filter_stoch_gc:
+        stoch_param = st.selectbox("↳ Parameter Stoch RSI:", ["5, 3, 3 (Cepat)", "14, 3, 3 (Standar)"], index=0)
+        st.caption(
+            "Parameter 5,3,3 lebih cepat bereaksi (lebih banyak sinyal, lebih rawan noise). "
+            "Parameter 14,3,3 lebih lambat/standar (sinyal lebih sedikit, biasanya lebih tervalidasi)."
+        )
+    else:
+        stoch_param = "5, 3, 3 (Cepat)"
     filter_stoch_oversold = st.checkbox("↳ Wajib GC di Oversold (K < 20)", value=False)
 
 with st.sidebar.expander("🎯 Indikator Tren & Struktur Harga", expanded=False):
@@ -1317,8 +1324,8 @@ filter_catalog = [
     (filter_early_gc, f"⚡ MACD Early GC ({macd_gc_param.split(' (')[0]})"),
     (filter_gc, f"✅ MACD Fase GC ({macd_gc_param.split(' (')[0]})"),
     (filter_rsi_gc, "📈 RSI Golden Cross"),
-    (filter_stoch_early_gc, "⚡ Stoch RSI Early GC"),
-    (filter_stoch_gc, "✅ Stoch RSI Fase GC"),
+    (filter_stoch_early_gc, f"⚡ Stoch RSI Early GC ({stoch_param.split(' (')[0]})"),
+    (filter_stoch_gc, f"✅ Stoch RSI Fase GC ({stoch_param.split(' (')[0]})"),
     (filter_uptrend, "📈 Saham Uptrend"),
     (filter_struktur, "🟢 Struktur HH & HL"),
     (filter_bb_buy, "📉 BB Buy"),
@@ -1531,7 +1538,7 @@ if start_button:
                 data["RSI"] = 100 - (100 / (1 + (gain / loss)))
                 data["RSI_SMA"] = data["RSI"].rolling(14).mean()
 
-                stoch_len = 5 if stoch_param == "5, 3, 3" else 14
+                stoch_len = 5 if "5, 3, 3" in stoch_param else 14
                 rsi_min, rsi_max = data["RSI"].rolling(stoch_len).min(), data["RSI"].rolling(stoch_len).max()
                 data["STOCH_RSI"] = ((data["RSI"] - rsi_min) / (rsi_max - rsi_min)) * 100
                 data["K"] = data["STOCH_RSI"].rolling(3).mean()
@@ -1732,7 +1739,7 @@ if start_button:
                         if not filter_rsi_oversold or (filter_rsi_oversold and data["RSI"].iloc[-2] < 30):
                             matched_signals.append("📈 RSI GC")
 
-                prm_label = stoch_param[:2].strip()
+                prm_label = stoch_param.split(",")[0].strip()
                 if filter_stoch_early_gc:
                     is_stoch_cross = (data["K"].iloc[-2] <= data["D"].iloc[-2]) and (data["K"].iloc[-1] > data["D"].iloc[-1])
                     if is_stoch_cross:
