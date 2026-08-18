@@ -1138,7 +1138,7 @@ st.markdown("""
 </h1>
 """, unsafe_allow_html=True)
 st.markdown("<h4 style='text-align: center; color: #8291ab; font-weight:500; margin-top:0.3rem;'>Hybrid Divergence, Moving Average &amp; Bandarmologi (IDX)</h4>", unsafe_allow_html=True)
-st.markdown("<p style='text-align: center; color: #64748b; font-size: 13px;'>🙏 Thanks to kak gitaketawa aka anak gawang aka mahaguru karyawan IHSG</p>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; color: #64748b; font-size: 13px;'>🙏 Thanks to kak gitaketawa aka anak gawang aka mahaguru karyawan IHSG x mas Rangga</p>", unsafe_allow_html=True)
 st.divider()
 
 st.sidebar.title("⚙️ Konfigurasi Screener")
