@@ -194,13 +194,28 @@ def check_ut_bot_alerts(df, sensitivity=1.0, atr_period=10):
 
     df['UT_Stop'] = stop
     
-    # Sinyal Buy = harga break ke atas Trailing Stop
-    # Sinyal Sell = harga break ke bawah Trailing Stop
-    df['UT_Buy'] = (df['Close'] > df['UT_Stop']) & (df['Close'].shift(1) <= df['UT_Stop'].shift(1))
-    df['UT_Sell'] = (df['Close'] < df['UT_Stop']) & (df['Close'].shift(1) >= df['UT_Stop'].shift(1))
+    # Sinyal Early = harga break ke atas/bawah Trailing Stop tepat pada bar ini
+    is_early_buy = (df['Close'] > df['UT_Stop']) & (df['Close'].shift(1) <= df['UT_Stop'].shift(1))
+    is_early_sell = (df['Close'] < df['UT_Stop']) & (df['Close'].shift(1) >= df['UT_Stop'].shift(1))
     
-    df['UT_Status'] = np.where(df['Close'] > df['UT_Stop'], '🟢 BULL',
-                               np.where(df['Close'] < df['UT_Stop'], '🔴 BEAR', '-'))
+    df['UT_Buy'] = is_early_buy
+    df['UT_Sell'] = is_early_sell
+    
+    # Pengelompokan 4 status UT Bot
+    conditions = [
+        is_early_buy,
+        (df['Close'] > df['UT_Stop']) & ~is_early_buy,
+        is_early_sell,
+        (df['Close'] < df['UT_Stop']) & ~is_early_sell
+    ]
+    choices = [
+        '🚀 EARLY BUY',
+        '🟢 MASIH BUY',
+        '⚠️ EARLY SELL',
+        '🔴 MASIH SELL'
+    ]
+    
+    df['UT_Status'] = np.select(conditions, choices, default='-')
     return df
 
 # =========================================
