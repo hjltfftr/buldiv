@@ -140,26 +140,76 @@ def evaluate_price_structure(df, period=20):
         return "🟠 Volatil (HH, LL)"
 
 # =========================================
+# 🧱 FUNGSI KLASIFIKASI BREAKOUT TYPE
+# =========================================
+def classify_breakout_type(data, consolidation_bars=60, post_breakout_bars=15, tolerance_pct=2.0):
+    """
+    Mendeteksi tipe breakout klasik berdasarkan interaksi harga dengan batas resistance.
+    - Type 1 & 2: Breakout bersih tanpa retest ke area resistance.
+    - Type 3: Breakout diikuti pullback (retest) ke batas resistance sebelum naik lagi.
+    """
+    if len(data) < consolidation_bars + post_breakout_bars + 1:
+        return None
+
+    # Pisahkan data menjadi 2 bagian: Fase Konsolidasi & Fase Post-Breakout
+    recent = data.tail(post_breakout_bars)
+    history = data.iloc[-(consolidation_bars + post_breakout_bars):-post_breakout_bars]
+
+    # Cari level resistance
+    resistance = history['High'].max()
+    
+    # Cari bar dimana harga close berhasil menembus resistance untuk pertama kalinya
+    breakout_idx = None
+    for i in range(len(recent)):
+        if recent['Close'].iloc[i] > resistance:
+            breakout_idx = i
+            break
+
+    # Jika tidak ada breakout sama sekali
+    if breakout_idx is None:
+        return None
+
+    # Jika breakout terjadi tepat di candle terakhir
+    if breakout_idx == len(recent) - 1:
+        return "🚀 Fresh Breakout"
+
+    # Evaluasi aksi harga SETELAH breakout
+    post_breakout_data = recent.iloc[breakout_idx + 1:]
+    min_low_post = post_breakout_data['Low'].min()
+    current_close = recent['Close'].iloc[-1]
+
+    # Hitung batas zona retest
+    retest_zone_upper = resistance * (1 + (tolerance_pct / 100))
+    retest_zone_lower = resistance * (1 - (tolerance_pct / 100))
+
+    if min_low_post > retest_zone_upper:
+        return "📈 Type 1/2 Breakout (No Retest)"
+    elif min_low_post >= retest_zone_lower and min_low_post <= retest_zone_upper:
+        if current_close > resistance:
+            return "🔄 Type 3 Breakout (Retest Sukses)"
+        else:
+            return "📉 Sedang Retest Resistance"
+    else:
+        if current_close < resistance * 0.98:
+            return "❌ Fakeout (Gagal)"
+        else:
+            return "🔄 Type 3 Breakout (Deep Retest)"
+
+# =========================================
 # 🤖 FUNGSI UT BOT ALERTS (KONVERSI PINE SCRIPT)
 # =========================================
 def check_ut_bot_alerts(df, sensitivity=1.0, atr_period=10):
-    """
-    Konversi langsung dari indikator UT Bot Alerts (QuantNomad).
-    Pine script atr() menggunakan RMA (Wilder's Smoothing).
-    """
     if len(df) < atr_period + 1:
         df['UT_Buy'] = False
         df['UT_Sell'] = False
         df['UT_Status'] = '-'
         return df
 
-    # Hitung True Range (TR)
     tr1 = df['High'] - df['Low']
     tr2 = (df['High'] - df['Close'].shift(1)).abs()
     tr3 = (df['Low'] - df['Close'].shift(1)).abs()
     tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
 
-    # RMA untuk menyamai atr() bawaan Pine Script
     atr = tr.ewm(alpha=1/atr_period, min_periods=atr_period, adjust=False).mean()
     nloss = sensitivity * atr
 
@@ -168,7 +218,6 @@ def check_ut_bot_alerts(df, sensitivity=1.0, atr_period=10):
     close_arr = df['Close'].values
     nloss_arr = nloss.values
 
-    # Hitung Trailing Stop (Sama persis dengan logika iff() TradingView)
     for i in range(1, n):
         if pd.isna(nloss_arr[i]):
             stop[i] = 0
@@ -194,14 +243,12 @@ def check_ut_bot_alerts(df, sensitivity=1.0, atr_period=10):
 
     df['UT_Stop'] = stop
     
-    # Sinyal Early = harga break ke atas/bawah Trailing Stop tepat pada bar ini
     is_early_buy = (df['Close'] > df['UT_Stop']) & (df['Close'].shift(1) <= df['UT_Stop'].shift(1))
     is_early_sell = (df['Close'] < df['UT_Stop']) & (df['Close'].shift(1) >= df['UT_Stop'].shift(1))
     
     df['UT_Buy'] = is_early_buy
     df['UT_Sell'] = is_early_sell
     
-    # Pengelompokan 4 status UT Bot
     conditions = [
         is_early_buy,
         (df['Close'] > df['UT_Stop']) & ~is_early_buy,
@@ -1212,6 +1259,12 @@ with st.sidebar.expander("🌅 Screener Khusus Pre-Market", expanded=False):
     filter_premarket = st.checkbox("Setup EOD (MA, Vol, MACD, PA)", value=False)
     st.caption("Skenario ideal disiapkan sore/malam hari: \n1. Vol Spike >1.5x\n2. Momentum (MACD GC / RSI > 50)\n3. Close kuat (High/Marubozu)\n4. Rebound MA penting.")
 
+with st.sidebar.expander("🧱 Klasifikasi Pola Breakout", expanded=False):
+    filter_breakout_type = st.checkbox("🔍 Cari Saham Breakout & Klasifikasi Tipe", value=False)
+    bo_consolidation = st.slider("↳ Lama Konsolidasi (Bar):", 20, 120, 60, help="Periode mencari resistance")
+    bo_post_window = st.slider("↳ Window Post-Breakout (Bar):", 5, 30, 15, help="Jumlah bar terakhir untuk mendeteksi breakout dan retest")
+    bo_tolerance = st.slider("↳ Toleransi Retest (%):", 0.5, 5.0, 2.0, 0.5, help="Jarak toleransi harga memantul dari garis resistance (Type 3)")
+
 with st.sidebar.expander("🤖 UT Bot Alerts", expanded=False):
     filter_ut_bot = st.checkbox("🤖 Muncul Sinyal UT Bot Buy", value=False)
     ut_a = st.number_input("↳ Key Value (Sensitivity):", value=1.0, step=0.1)
@@ -1290,6 +1343,7 @@ with st.sidebar.expander("📊 Filter Volume Akumulasi", expanded=False):
 # =========================================
 filter_catalog = [
     (filter_premarket, "🌅 Pre-Market Setup"),
+    (filter_breakout_type, "🧱 Klasifikasi Breakout"),
     (filter_ut_bot, "🤖 UT Bot Buy"),
     (filter_div, "🔥 Hybrid Bullish Divergence (MACD)"),
     (filter_cci_div, "📊 CCI Bullish Divergence"),
@@ -1348,7 +1402,8 @@ with col2:
 
 if start_button:
     all_filters = [
-        filter_div, filter_cci_div, filter_stochrsi_div, filter_killtrend, filter_early_gc, filter_gc, filter_stoch_early_gc, filter_stoch_gc, filter_rsi_gc,
+        filter_breakout_type, filter_div, filter_cci_div, filter_stochrsi_div, filter_killtrend, 
+        filter_early_gc, filter_gc, filter_stoch_early_gc, filter_stoch_gc, filter_rsi_gc,
         filter_melilit, filter_rapat_up, filter_adx, filter_bb_buy, filter_bounce_ma20,
         filter_bounce_ma50, filter_dekat_ma20, filter_dekat_ma50, filter_dekat_ma100, filter_dekat_ma200,
         filter_vol_5, filter_vol_10, filter_vol_20, filter_uptrend, filter_struktur, filter_premarket, filter_ut_bot
@@ -1510,6 +1565,19 @@ if start_button:
                 close, open_now, high_now, low_now = float(close_series.iloc[-1]), float(data["Open"].iloc[-1]), float(data["High"].iloc[-1]), float(data["Low"].iloc[-1])
                 last_candle_type = get_candle_type(open_now, high_now, low_now, close)
                 ma20_now, ma50_now, ma100_now, ma200_now = float(data["MA20"].iloc[-1]), float(data["MA50"].iloc[-1]), float(data["MA100"].iloc[-1]), float(data["MA200"].iloc[-1])
+
+                bo_type_label = "-"
+                if filter_breakout_type:
+                    bo_type = classify_breakout_type(
+                        data, 
+                        consolidation_bars=bo_consolidation, 
+                        post_breakout_bars=bo_post_window,
+                        tolerance_pct=bo_tolerance
+                    )
+                    if bo_type is not None:
+                        bo_type_label = bo_type
+                        if "Gagal" not in bo_type and "Sedang Retest" not in bo_type:
+                            matched_signals.append(bo_type)
 
                 if filter_ut_bot and data["UT_Buy"].iloc[-1]: matched_signals.append("🤖 UT BOT BUY")
 
@@ -1682,6 +1750,7 @@ if start_button:
                         "UT Bot Status": data["UT_Status"].iloc[-1] if 'UT_Status' in data.columns else "-",
                         f"Status Broksum ({periode_broksum})": broksum_result,
                         "Sinyal Terdeteksi": " + ".join(matched_signals),
+                        "Tipe Breakout": bo_type_label,
                         "Tgl Div MACD": tanggal_buldiv,
                         "Change dr Div MACD (%)": change_div,
                         "Tgl CCI Div": tanggal_ccidiv,
